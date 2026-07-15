@@ -8,6 +8,7 @@ handled inside the systems and never crash an episode.
 
 from __future__ import annotations
 
+import hashlib
 import time
 
 import numpy as np
@@ -61,6 +62,9 @@ def run_episode(
     step = 0
     exception: str | None = None
     step_latencies: list[float] = []
+    # Digest of the exact executed action sequence (post-clip, pre-env):
+    # two episodes with equal digests executed bitwise-identical commands.
+    action_hasher = hashlib.sha256()
 
     try:
         raw_obs, _ = env.reset(seed=episode_seed)
@@ -78,6 +82,7 @@ def run_episode(
             for p in perturbations:
                 action = p.modify_action(action, step)
             env_action = act_adapter.adapt(action)
+            action_hasher.update(np.ascontiguousarray(env_action, dtype=np.float32).tobytes())
 
             for p in perturbations:
                 p.before_step(env, step)
@@ -104,6 +109,7 @@ def run_episode(
         "actions_clipped": act_adapter.clipped_actions,
         "mean_decision_latency_s": float(np.mean(step_latencies)) if step_latencies else 0.0,
         "perturbations": [p.name for p in perturbations],
+        "action_digest": action_hasher.hexdigest()[:16],
     }
     result = RolloutResult(
         episode_seed=episode_seed,

@@ -1,0 +1,106 @@
+# Actsemble Phase 0A v1 — frozen experiment specification.
+#
+# Scientific question: can an action-chunk verifier trained only on the
+# same successful demonstrations improve the nominal closed-loop success
+# of an unchanged Diffusion Policy by selecting among identical
+# policy-generated candidate chunks?
+#
+# FROZEN before any Stage A training. Material changes require a new
+# experiment version directory (phase0a_v2). This file is copied into
+# outputs/phase0a_v1/ at init; all stages read the frozen copy.
+
+experiment_version: phase0a_v1
+git_commit_at_freeze: 3e37f3f86a3f288ba6311111295ba35a2ae48d34
+
+# ---- task / simulator (audited facts, verified against live envs) -----
+task:
+  task_id: PushT-v1
+  robot: panda_stick
+  controller: pd_ee_delta_pose
+  simulator: ManiSkill3
+  simulator_version: 3.0.1
+  sapien_version: 3.0.3
+  physics_backend: physx_cuda
+  control_frequency_hz: 20
+  episode_horizon: 100
+  state_dimension: 31
+  state_layout: '{"agent.qpos": [0,7], "agent.qvel": [7,14], "extra.tcp_pose": [14,21], "extra.goal_pos": [21,24], "extra.obj_pose": [24,31]}'
+  action_dimension: 6
+  action_bounds: [[-1,-1,-1,-1,-1,-1], [1,1,1,1,1,1]]
+
+# ---- data ---------------------------------------------------------------
+dataset:
+  master_path: data/push_t_pilot.h5
+  master_dataset_hash: d38bfc016d39bc7a14b3f7cfae59550af0a9fc86281c68133a47e43fe7d42490
+  master_episodes: 719
+  data_config: configs/data/pilot.yaml       # source bundle + conversion settings
+  candidate_demo_counts: [10, 25, 50, 100, 200, 400, 719]
+  intermediate_counts_if_needed: [15, 20, 35, 75, 150, 300, 600]
+  subset_seed: 0                             # one seeded permutation; nested first-n
+  split_seed: 0
+  val_fraction: 0.1
+
+# ---- policy (existing architecture, unchanged) --------------------------
+policy_config: configs/policies/state_diffusion.yaml
+policy_config_overrides:
+  training:
+    max_steps: 30000
+    checkpoint_every: 2000
+    # early stopping does not exist in the trainer (fixed budget always)
+
+# ---- verifier (existing architecture + negatives, unchanged) ------------
+verifier_config: configs/components/action_chunk_compatibility.yaml
+verifier_config_overrides:
+  training:
+    max_steps: 8000
+    checkpoint_every: 500
+
+# ---- seeds ---------------------------------------------------------------
+calibration_policy_seeds: [0, 1, 2]          # Stage A learning curve
+final_policy_seeds: [0, 1, 2, 3, 4]          # Stage B
+verifier_seeds: [0, 1, 2, 3, 4]
+verifier_seed_pairing: same_as_policy        # policy seed k <-> verifier seed k
+
+# ---- checkpoint selection (implemented protocol, unchanged) --------------
+confirmation_rule:
+  top_k: 5
+  within_of_best: 0.10
+policy_selection_rule: lexicographic(confirmation_rate desc, screening_rate desc, step asc)
+verifier_selection:
+  primary: pairwise_ranking_accuracy
+  secondary: validation_loss                 # lower is better (tie-break), then earliest step
+
+# ---- inference / systems (frozen) ----------------------------------------
+inference:
+  weights: ema
+  sampler: ddim
+  inference_steps: 10
+  temperature: 1.0
+  observation_horizon: 2
+  prediction_horizon: 16
+  execution_horizon: 8
+num_candidates: 16                           # K, shared by all three systems (paired mode)
+systems:
+  standalone: candidate_zero (K=16 paired tensor, execute candidate 0, no verifier)
+  candidate_zero_control: first_candidate (same K=16 tensor, execute candidate 0, no verifier)
+  actsemble: highest_component_score (same K=16 tensor, verifier argmax, fallback candidate 0)
+
+# ---- panels (pairwise disjoint; verified incl. demonstration seeds) -------
+panels:
+  screening:                 {env_seed: 2000, num_episodes: 50}
+  confirmation:              {env_seed: 3500, num_episodes: 200}
+  dataset_size_development:  {env_seed: 5500, num_episodes: 200}
+  integration:               {env_seed: 4500, num_episodes: 10}
+  final_test:                {env_seed: 1000, num_episodes: 500}
+episode_max_steps: 100
+
+# ---- Stage A selection rule (frozen) ---------------------------------------
+n_demos_primary_rule: >
+  Largest demonstration count whose MEAN selected-policy success across the
+  three calibration policy seeds on the dataset_size_development panel lies
+  in [0.25, 0.50] inclusive. If none, add intermediate nested counts.
+target_success_range: [0.25, 0.50]
+
+# ---- final evaluation -------------------------------------------------------
+final_regime: {name: nominal, max_steps: 100, perturbations: []}
+final_eval_episodes_per_policy_seed: 500

@@ -163,12 +163,22 @@ class ReplanningSystemBase:
         ):
             raise RuntimeError(f"Bad candidate shape {tuple(candidates.shape)}")
         valid = torch.isfinite(candidates).all(dim=(1, 2))
+        with torch.no_grad():
+            # Compact per-candidate diagnostics (mean |a| and mean |Δa|),
+            # persisted so offline analysis can compare selected vs rejected
+            # chunks without storing full tensors.
+            cand_mean_abs = candidates.abs().mean(dim=(1, 2)).cpu().tolist()
+            cand_smoothness = (
+                (candidates[:, 1:] - candidates[:, :-1]).abs().mean(dim=(1, 2)).cpu().tolist()
+            )
         record: dict = {
             "replan_index": self._replan_index,
             "episode_seed": self.episode_seed,
             "policy_latency_s": policy_latency,
             "num_valid_candidates": int(valid.sum()),
             "candidate_hash": candidate_tensor_hash(candidates),
+            "candidate_mean_abs": cand_mean_abs,
+            "candidate_smoothness": cand_smoothness,
         }
         selected = self._select(candidates, valid, history, record)
         record["selected_index"] = int(selected)

@@ -81,7 +81,20 @@ def run_panel_episode(
 def episode_row(ep: PanelEpisode, result) -> dict:
     d = result.diagnostics
     candidate_hashes = d.get("candidate_hashes", [])
+    replans_compact = [
+        {
+            "replan_index": r.get("replan_index"),
+            "selected_index": r.get("selected_index"),
+            "component_scores": r.get("component_scores"),
+            "candidate_mean_abs": r.get("candidate_mean_abs"),
+            "candidate_smoothness": r.get("candidate_smoothness"),
+            "fallback": r.get("fallback", False),
+        }
+        for r in d.get("replans", [])
+    ]
     return {
+        "action_digest": d.get("action_digest"),
+        "replans": replans_compact,
         "episode_index": ep.episode_index,
         "env_seed": ep.env_seed,
         "policy_sampling_seed": ep.policy_sampling_seed,
