@@ -1,0 +1,12 @@
+name: standalone_diffusion
+
+policy:
+  type: state_diffusion
+  checkpoint: null       # supplied via --policy-checkpoint
+  frozen: true
+  num_candidates: 1
+
+components: []
+
+selection:
+  type: candidate_zero

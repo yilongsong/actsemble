@@ -1,0 +1,18 @@
+name: compatibility_reranking_actsemble
+
+policy:
+  type: state_diffusion
+  checkpoint: null
+  frozen: true
+  num_candidates: 16
+
+components:
+  - name: action_chunk_compatibility
+    type: action_chunk_compatibility
+    checkpoint: null     # supplied via --component-checkpoint
+
+selection:
+  type: highest_component_score
+  fallback: candidate_zero
+  require_same_dataset_hash: true
+  require_same_candidate_set_for_comparisons: true

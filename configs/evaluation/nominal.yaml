@@ -1,0 +1,9 @@
+name: nominal
+regime: nominal
+seed: 100
+num_episodes: 50
+max_steps: 100
+perturbations: []
+video:
+  max_success: 2
+  max_failure: 2

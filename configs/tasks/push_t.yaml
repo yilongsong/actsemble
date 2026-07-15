@@ -1,0 +1,14 @@
+# PushT-v1 task facts (recorded here for reference; authoritative values
+# live in dataset/checkpoint metadata and are verified against the live env).
+task_id: PushT-v1
+robot: panda_stick
+control_mode: pd_ee_delta_pose
+sim_backend: physx_cuda
+obs_mode: state
+max_episode_steps: 100
+control_frequency: 20
+state_dimension: 31
+action_dimension: 6
+# Flattened state layout (from obs_mode=state_dict probing):
+#   agent.qpos [0,7), agent.qvel [7,14), extra.tcp_pose [14,21),
+#   extra.goal_pos [21,24), extra.obj_pose [24,31)

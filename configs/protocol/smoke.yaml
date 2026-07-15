@@ -1,0 +1,42 @@
+# Scaled-down protocol spec for end-to-end verification of the machinery.
+# Panel sizes and budgets are tiny: outcomes here are NEVER evidence.
+experiment_version: smoke_v1
+
+dataset: data/push_t_smoke.h5
+policy_config: configs/policies/state_diffusion.yaml
+verifier_config: configs/components/action_chunk_compatibility.yaml
+
+policy_config_overrides:
+  model: {channels: [32, 64, 128]}
+  training:
+    max_steps: 300
+    checkpoint_every: 100
+    batch_size: 64
+    eval_every: 300
+
+verifier_config_overrides:
+  model: {hidden: [64, 64]}
+  training:
+    max_steps: 150
+    checkpoint_every: 50
+    batch_size: 64
+    eval_every: 150
+
+policy_seeds: [0, 1]
+verifier_seed_pairing: same_as_policy
+
+panels:
+  screening:                 {env_seed: 2000, num_episodes: 3}
+  confirmation:              {env_seed: 3500, num_episodes: 4}
+  integration:               {env_seed: 4500, num_episodes: 2}
+  final_test:                {env_seed: 1000, num_episodes: 4}
+  dataset_size_development:  {env_seed: 5500, num_episodes: 3}
+
+episode_max_steps: 60
+
+confirmation_rule: {top_k: 5, within_of_best: 0.10}
+verifier_selection: {primary: pairwise_ranking_accuracy, secondary: balanced_accuracy}
+paired_num_candidates: 4
+
+final_regimes:
+  - {name: nominal, max_steps: 60, perturbations: []}

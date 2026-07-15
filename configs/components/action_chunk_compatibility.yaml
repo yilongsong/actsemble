@@ -1,0 +1,59 @@
+name: action_chunk_compatibility
+
+# Must match the policy config for the shared contract (enforced at
+# system construction via checkpoint metadata).
+observation:
+  mode: state
+  history: 2
+  include_previous_action: false
+
+action:
+  prediction_horizon: 16
+  execution_horizon: 8
+
+model:
+  hidden: [512, 512, 256]
+  dropout: 0.1
+
+negatives:
+  # PushT (panda_stick) has no gripper: gripper_mismatch stays disabled.
+  enabled_types:
+    - additive_noise
+    - action_scaling
+    - translation_offset
+    - rotation_perturbation
+    - temporal_shift
+    - other_trajectory
+    - incompatible_same_trajectory
+    - partial_reversal
+    - dimension_shuffle
+    - discontinuity_injection
+  additive_noise_scale: 0.4
+  scaling_range_low: [0.1, 0.5]
+  scaling_range_high: [1.8, 3.0]
+  translation_offset_scale: 0.5
+  rotation_offset_scale: 0.7
+  position_dims: [0, 1, 2]
+  rotation_dims: [3, 4, 5]
+  gripper_dims: []
+  temporal_shift_min: 4
+  temporal_shift_max: 12
+  incompatible_min_distance: 32
+  reversal_min_fraction: 0.5
+  discontinuity_scale: 0.8
+
+training:
+  seed: 0
+  objective: binary_classification   # or pairwise_ranking
+  ranking_margin: 1.0
+  negatives_per_positive: 4
+  negative_seed: 1234
+  batch_size: 256
+  learning_rate: 0.0001
+  weight_decay: 0.000001
+  gradient_clip_norm: 1.0
+  val_fraction: 0.1
+  split_seed: 0
+  max_steps: 8000
+  log_every: 50
+  eval_every: 1000

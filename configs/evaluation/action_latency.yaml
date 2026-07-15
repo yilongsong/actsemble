@@ -1,0 +1,11 @@
+name: action_latency
+regime: one_step_latency
+seed: 100
+num_episodes: 50
+max_steps: 100
+perturbations:
+  - type: action_latency
+    delay_steps: 1
+video:
+  max_success: 2
+  max_failure: 2

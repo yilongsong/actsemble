@@ -1,0 +1,22 @@
+name: multisample_control
+
+# Compute-matched sampling control: same frozen policy, same K candidate
+# chunks as Actsemble, but selection uses NO learned component. Not
+# claimed to be a strong selector.
+#
+# Protocol §11 default is first_candidate: the control generates the
+# identical K-candidate tensor and executes candidate zero, so it differs
+# from Actsemble ONLY in the selection rule (and from the paired-mode
+# standalone in nothing but labeling — an execution-identity control).
+# uniform_random (seeded) remains available as a diagnostic variant.
+policy:
+  type: state_diffusion
+  checkpoint: null
+  frozen: true
+  num_candidates: 16
+
+components: []
+
+selection:
+  type: first_candidate   # protocol §11; uniform_random is a diagnostic variant
+  selection_seed: 7

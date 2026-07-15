@@ -1,0 +1,38 @@
+name: state_diffusion_policy
+
+observation:
+  mode: state
+  history: 2
+  include_previous_action: false
+
+action:
+  prediction_horizon: 16
+  execution_horizon: 8
+
+model:
+  type: conditional_unet_1d
+  channels: [128, 256, 512]
+  diffusion_embedding_dim: 128
+  kernel_size: 5
+
+diffusion:
+  training_steps: 100
+  beta_schedule: cosine
+  inference_sampler: ddim
+  inference_steps: 10
+  prediction_type: epsilon
+  temperature: 1.0
+
+training:
+  seed: 0
+  batch_size: 256
+  learning_rate: 0.0001
+  weight_decay: 0.000001
+  ema_decay: 0.999
+  gradient_clip_norm: 1.0
+  val_fraction: 0.1
+  split_seed: 0
+  mask_padded_actions: false   # DP-style edge-replicated padding trains unmasked
+  max_steps: 30000
+  log_every: 50
+  eval_every: 1000

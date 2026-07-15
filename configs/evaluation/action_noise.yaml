@@ -1,0 +1,12 @@
+name: action_noise
+regime: mild_action_noise
+seed: 100            # same root seed => same paired env seeds as nominal
+num_episodes: 50
+max_steps: 100
+perturbations:
+  - type: action_noise
+    scale: 0.15
+    distribution: gaussian
+video:
+  max_success: 2
+  max_failure: 2

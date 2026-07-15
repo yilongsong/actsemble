@@ -1,0 +1,16 @@
+name: object_nudge
+regime: mild_object_nudge
+seed: 100
+num_episodes: 50
+max_steps: 100
+# Privileged, seeded, recoverable mid-episode displacement of the T object.
+# The system observes only the resulting state.
+perturbations:
+  - type: object_nudge
+    actor_name: Tee
+    max_translation: 0.03
+    max_yaw_degrees: 15.0
+    step_window: [20, 50]
+video:
+  max_success: 2
+  max_failure: 2

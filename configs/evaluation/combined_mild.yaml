@@ -1,0 +1,17 @@
+name: combined_mild
+regime: combined_mild
+seed: 100
+num_episodes: 50
+max_steps: 100
+perturbations:
+  - type: action_noise
+    scale: 0.1
+    distribution: gaussian
+  - type: object_nudge
+    actor_name: Tee
+    max_translation: 0.02
+    max_yaw_degrees: 10.0
+    step_window: [20, 50]
+video:
+  max_success: 2
+  max_failure: 2

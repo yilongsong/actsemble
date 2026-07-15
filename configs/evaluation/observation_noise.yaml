@@ -1,0 +1,12 @@
+name: observation_noise
+regime: mild_state_noise
+seed: 100
+num_episodes: 50
+max_steps: 100
+# Diagnostic perturbation, not a claim of realistic sensing.
+perturbations:
+  - type: observation_noise
+    sigma: 0.005
+video:
+  max_success: 2
+  max_failure: 2

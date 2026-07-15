@@ -1,0 +1,23 @@
+# Data and outputs (frozen datasets are large binaries; regenerate via scripts/prepare_dataset.py)
+data/
+outputs/
+runs/
+*.h5
+*.hdf5
+*.zarr
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Editors
+.vscode/
+.idea/
+
+# ManiSkill demo cache lives in ~/.maniskill by default; nothing local to ignore.
