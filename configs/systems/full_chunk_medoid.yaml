@@ -1,0 +1,15 @@
+name: full_chunk_medoid
+
+policy:
+  type: state_diffusion
+  checkpoint: null        # supplied via --policy-checkpoint
+  frozen: true
+  num_candidates: 16
+
+components: []
+
+selection:
+  type: full_chunk_medoid
+  fallback: candidate_zero
+  require_same_candidate_set_for_comparisons: true
+  # distance: normalized full-chunk squared Euclidean; tie-break: lowest index

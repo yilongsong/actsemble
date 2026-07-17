@@ -24,10 +24,11 @@ def run_job(job: dict, gpu: int) -> tuple[dict, int]:
     log_path = Path(job["log"])
     log_path.parent.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(gpu)}
+    script = job.get("script", "scripts/phase0a.py")  # per-job script override
     t0 = time.time()
     with open(log_path, "w") as log:
         proc = subprocess.run(
-            [sys.executable, str(REPO / "scripts" / "phase0a.py"), *job["args"]],
+            [sys.executable, str(REPO / script), *job["args"]],
             stdout=log, stderr=subprocess.STDOUT, env=env, cwd=REPO,
         )
     dt = time.time() - t0

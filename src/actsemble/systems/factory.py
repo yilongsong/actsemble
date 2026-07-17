@@ -9,11 +9,16 @@ Enforces the fairness safeguards before assembly:
 from __future__ import annotations
 
 from .candidate_reranking import CandidateRerankingActsemble
+from .consensus_selection import SELECTOR_TYPES, ConsensusSelectionSystem, build_selector
 from .interface import ReplanningSystemBase, check_same_data
 from .multisample_control import MultiSampleControlSystem
 from .standalone import StandaloneDiffusionSystem
+from .verifier_ensemble import MeanScoreRerankingActsemble
 
-SYSTEM_TYPES = ("candidate_zero", "uniform_random", "first_candidate", "highest_component_score")
+SYSTEM_TYPES = (
+    "candidate_zero", "uniform_random", "first_candidate", "highest_component_score",
+    "mean_component_score", *SELECTOR_TYPES,
+)
 
 
 def build_system(
@@ -57,6 +62,27 @@ def build_system(
             selection_seed=int(selection.get("selection_seed", 7)),
             action_horizon=action_horizon,
             candidate_root_seed=candidate_root_seed,
+        )
+    if sel_type in SELECTOR_TYPES:
+        # non-learned consensus selectors: no components, selection over the
+        # shared candidate tensor only.
+        if components:
+            raise ValueError(f"consensus selector {sel_type!r} takes no components")
+        return ConsensusSelectionSystem(
+            policy,
+            build_selector(sel_type, selection),
+            num_candidates=num_candidates,
+            action_horizon=action_horizon,
+            candidate_root_seed=candidate_root_seed,
+            early_weight_decay=float(selection.get("early_weight_decay", 0.25)),
+            diagnostic_mode=bool(selection.get("diagnostic_mode", False)),
+        )
+    if sel_type == "mean_component_score":
+        if len(components) < 1:
+            raise ValueError("mean_component_score needs at least one component")
+        return MeanScoreRerankingActsemble(
+            policy, components, num_candidates=num_candidates,
+            action_horizon=action_horizon, candidate_root_seed=candidate_root_seed,
         )
     if sel_type == "highest_component_score":
         if len(components) != 1:

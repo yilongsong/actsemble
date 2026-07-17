@@ -1,0 +1,15 @@
+name: coordinate_median_projection
+
+policy:
+  type: state_diffusion
+  checkpoint: null
+  frozen: true
+  num_candidates: 16
+
+components: []
+
+selection:
+  type: coordinate_median_projection
+  fallback: candidate_zero
+  require_same_candidate_set_for_comparisons: true
+  # coordinate-wise median chunk (never executed directly); execute nearest real candidate

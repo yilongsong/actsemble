@@ -1,0 +1,17 @@
+name: largest_cluster_medoid
+
+policy:
+  type: state_diffusion
+  checkpoint: null
+  frozen: true
+  num_candidates: 16
+
+components: []
+
+selection:
+  type: largest_cluster_medoid
+  fallback: candidate_zero
+  require_same_candidate_set_for_comparisons: true
+  clustering:
+    algorithm: two_cluster_kmedoids   # deterministic: init cand0 + farthest; no randomness
+    max_iterations: 20

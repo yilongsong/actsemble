@@ -1,0 +1,15 @@
+name: early_weighted_medoid
+
+policy:
+  type: state_diffusion
+  checkpoint: null
+  frozen: true
+  num_candidates: 16
+
+components: []
+
+selection:
+  type: early_weighted_medoid
+  early_weight_decay: 0.25   # w_tau = exp(-decay*tau), normalized; NOT tuned on final panel
+  fallback: candidate_zero
+  require_same_candidate_set_for_comparisons: true

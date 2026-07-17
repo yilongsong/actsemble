@@ -1,0 +1,374 @@
+<!--
+  Actsemble rollout-comparison viewer (STANDARDIZED — do not fork per experiment).
+  This is a template: scripts/build_dashboard.py injects `const DATA = {...}` in
+  place of the __ACTSEMBLE_DATA__ token and writes a self-contained dashboard/<name>.html.
+  Consumes the manifest schema documented in dashboard/README.md. Videos are
+  referenced by paths relative to the emitted html (dashboard/videos/...).
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Actsemble · Rollout Comparison</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --surface:#ffffff; --surface-2:#eef1f5; --border:#dfe3ea;
+    --ink:#1b2430; --ink-2:#55606e; --ink-3:#8a94a3; --accent:#4361ee;
+    --good:#2a9d8f; --bad:#c1121f;
+    --cat-near_miss:#e76f51; --cat-misaligned:#e9c46a; --cat-mispositioned:#457b9d;
+    --cat-never_engaged:#8d99ae; --cat-success:#2a9d8f; --cat-unknown:#c7ccd4;
+    --shadow:0 1px 2px rgba(20,30,50,.06),0 2px 8px rgba(20,30,50,.05);
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#0f1319; --surface:#171c24; --surface-2:#1e242e; --border:#2a323d;
+    --ink:#e6eaf0; --ink-2:#a3adba; --ink-3:#6b7684; --accent:#7c93ff;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 2px 10px rgba(0,0,0,.25);
+  }}
+  :root[data-theme="dark"]{--bg:#0f1319;--surface:#171c24;--surface-2:#1e242e;--border:#2a323d;--ink:#e6eaf0;--ink-2:#a3adba;--ink-3:#6b7684;--accent:#7c93ff;--shadow:0 1px 2px rgba(0,0,0,.3),0 2px 10px rgba(0,0,0,.25);}
+  :root[data-theme="light"]{--bg:#f7f8fa;--surface:#ffffff;--surface-2:#eef1f5;--border:#dfe3ea;--ink:#1b2430;--ink-2:#55606e;--ink-3:#8a94a3;--accent:#4361ee;--shadow:0 1px 2px rgba(20,30,50,.06),0 2px 8px rgba(20,30,50,.05);}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent)}
+  header{position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  header .title{font-weight:700;font-size:16px;letter-spacing:-.01em}
+  header .meta{color:var(--ink-3);font-size:12px;font-family:var(--mono)}
+  header .spacer{flex:1}
+  .tabs{display:flex;gap:2px;padding:0 16px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:49px;z-index:19}
+  .tab{padding:10px 16px;cursor:pointer;color:var(--ink-2);border-bottom:2px solid transparent;font-weight:600;font-size:13px;user-select:none}
+  .tab:hover{color:var(--ink)}
+  .tab.active{color:var(--ink);border-bottom-color:var(--accent)}
+  main{padding:20px;max-width:1500px;margin:0 auto}
+  .panel{display:none} .panel.active{display:block}
+  .grid{display:grid;gap:14px}
+  .cards{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;box-shadow:var(--shadow)}
+  .card h3{margin:0 0 2px;font-size:13px;color:var(--ink-2);font-weight:600;display:flex;align-items:center;gap:8px}
+  .swatch{width:10px;height:10px;border-radius:3px;display:inline-block;flex:none}
+  .big{font-size:30px;font-weight:750;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .sub{font-size:12px;color:var(--ink-3);font-family:var(--mono)}
+  .modebar{display:flex;height:8px;border-radius:5px;overflow:hidden;margin-top:12px;background:var(--surface-2)}
+  .modebar > span{display:block;height:100%}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums}
+  th{color:var(--ink-3);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+  td.num,th.num{text-align:right}
+  .badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap}
+  .badge.pass{background:color-mix(in srgb,var(--good) 18%,transparent);color:var(--good)}
+  .badge.fail{background:color-mix(in srgb,var(--bad) 16%,transparent);color:var(--bad)}
+  .badge.sig{background:color-mix(in srgb,var(--good) 16%,transparent);color:var(--good)}
+  .badge.ns{background:var(--surface-2);color:var(--ink-3)}
+  .modechip{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;color:#0d0d0d}
+  .section-title{font-size:12px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em;margin:22px 0 10px}
+  .callout{background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 8%,var(--surface)),var(--surface));border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:10px;padding:14px 16px;margin-bottom:16px}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+  select,input[type=search]{background:var(--surface);color:var(--ink);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;font-family:inherit}
+  .eps{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+  .ep{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;box-shadow:var(--shadow)}
+  .ep .epbar{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+  .ep .seed{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-left:auto}
+  .ep .viz{display:flex;gap:6px;padding:8px}
+  .ep svg{display:block;background:var(--surface-2);border-radius:6px}
+  .ep video{width:100%;border-radius:6px;background:#000;display:block}
+  .ep .mx{display:flex;gap:12px;padding:4px 10px 10px;font-size:11px;color:var(--ink-2);font-family:var(--mono);flex-wrap:wrap}
+  .ep .mx b{color:var(--ink);font-weight:700}
+  .muted{color:var(--ink-3)}
+  .ep video.hero{width:100%;aspect-ratio:1/1;object-fit:cover;background:#000;display:block}
+  .novideo.hero{aspect-ratio:1/1;height:auto}
+  .covwrap{padding:6px 8px 2px}
+  .chk{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--ink-2);cursor:pointer;white-space:nowrap}
+  .cmp{grid-template-columns:1fr 1fr;gap:16px}
+  .cmp-seed{grid-column:1/-1;font-family:var(--mono);font-size:12px;color:var(--ink-3);border-top:1px dashed var(--border);padding-top:10px;margin-top:4px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink-2);margin:6px 0 2px}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .btn{background:var(--surface-2);border:1px solid var(--border);color:var(--ink);border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:600;font-size:12px}
+  .btn:hover{border-color:var(--accent)}
+  .novideo{display:flex;align-items:center;justify-content:center;height:60px;color:var(--ink-3);font-size:11px;background:var(--surface-2);border-radius:6px;flex:1}
+  .barrow{display:grid;grid-template-columns:120px 1fr 46px;align-items:center;gap:10px;margin:6px 0}
+  .barrow .lab{font-size:12px;font-weight:600;display:flex;align-items:center;gap:7px}
+  .track{height:20px;background:var(--surface-2);border-radius:6px;overflow:hidden;display:flex}
+  .track > span{height:100%}
+</style>
+
+<header>
+  <span class="title">Actsemble · Rollout Comparison</span>
+  <span class="meta" id="hmeta"></span>
+  <span class="spacer"></span>
+  <span class="meta" id="hpanel"></span>
+  <button class="btn" id="themebtn">◐ theme</button>
+</header>
+<nav class="tabs" id="tabs"></nav>
+<main>
+  <section class="panel active" id="p-overview"></section>
+  <section class="panel" id="p-failures"></section>
+  <section class="panel" id="p-episodes"></section>
+  <section class="panel" id="p-compare"></section>
+</main>
+
+<script>
+const DATA = __ACTSEMBLE_DATA__;
+// ---------- helpers ----------
+const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const pct=x=>x==null?"—":(100*x).toFixed(1)+"%";
+const el=(t,a={},...k)=>{const n=document.createElement(t);for(const[p,v]of Object.entries(a)){if(p==="class")n.className=v;else if(p==="html")n.innerHTML=v;else if(p.startsWith("on"))n.addEventListener(p.slice(2),v);else n.setAttribute(p,v);}for(const c of k.flat())if(c!=null)n.append(c.nodeType?c:document.createTextNode(c));return n;};
+const TAX=DATA.failure_taxonomy;
+const catColor=c=>TAX[c]?.color||"var(--cat-unknown)";
+const catLabel=c=>TAX[c]?.label||c;
+const sysBy=n=>DATA.systems.find(s=>s.name===n);
+const WORLD=DATA.world||{x0:-0.46,x1:0.24,y0:-0.36,y1:0.14};
+
+// ---------- trajectory sparkline (SVG) ----------
+function trajSVG(ep, w=118, h=92){
+  const g=DATA.goal_xy, tol=DATA.goal_tolerance||0.05;
+  const sx=x=>((x-WORLD.x0)/(WORLD.x1-WORLD.x0))*w;
+  const sy=y=>h-((y-WORLD.y0)/(WORLD.y1-WORLD.y0))*h; // flip
+  const t=ep.traj;
+  let paths="";
+  if(t&&t.obj&&t.obj.length>1){
+    const pts=t.obj;
+    for(let i=1;i<pts.length;i++){
+      const f=i/(pts.length-1);
+      const col=`hsl(${210-120*f},70%,${50+8*f}%)`;
+      paths+=`<line x1="${sx(pts[i-1][0]).toFixed(1)}" y1="${sy(pts[i-1][1]).toFixed(1)}" x2="${sx(pts[i][0]).toFixed(1)}" y2="${sy(pts[i][1]).toFixed(1)}" stroke="${col}" stroke-width="1.6" stroke-linecap="round"/>`;
+    }
+    const s0=pts[0], sN=pts[pts.length-1];
+    paths+=`<circle cx="${sx(s0[0]).toFixed(1)}" cy="${sy(s0[1]).toFixed(1)}" r="2.6" fill="var(--ink)"/>`;
+    paths+=`<path d="M${(sx(sN[0])-3).toFixed(1)},${(sy(sN[1])-3).toFixed(1)} l6,6 M${(sx(sN[0])+3).toFixed(1)},${(sy(sN[1])-3).toFixed(1)} l-6,6" stroke="${ep.success?'var(--good)':'var(--bad)'}" stroke-width="1.7"/>`;
+  } else {
+    paths=`<text x="${w/2}" y="${h/2}" fill="var(--ink-3)" font-size="9" text-anchor="middle">no trajectory</text>`;
+  }
+  const gx=sx(g[0]), gy=sy(g[1]);
+  const ring=`<circle cx="${gx.toFixed(1)}" cy="${gy.toFixed(1)}" r="${(tol/(WORLD.x1-WORLD.x0)*w).toFixed(1)}" fill="none" stroke="var(--cat-misaligned)" stroke-dasharray="2 2" stroke-width="1"/>`;
+  const star=`<circle cx="${gx.toFixed(1)}" cy="${gy.toFixed(1)}" r="3" fill="var(--cat-misaligned)" stroke="#7a5901" stroke-width="1"/>`;
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${ring}${paths}${star}</svg>`;
+}
+// Coverage = the success signal over time (task-general). Full-width sparkline.
+function covSVG(ep){
+  const c=ep.traj&&ep.traj.cov; const w=120,h=26;
+  if(!c||!c.length)return "";
+  const sx=i=>(i/(c.length-1))*w, sy=v=>h-2-v*(h-4);
+  let d="M"+c.map((v,i)=>`${sx(i).toFixed(1)},${sy(v).toFixed(1)}`).join(" L");
+  const y90=sy(0.9).toFixed(1);
+  return `<svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="background:var(--surface-2);border-radius:6px;display:block">
+    <line x1="0" y1="${y90}" x2="${w}" y2="${y90}" stroke="var(--ink-3)" stroke-dasharray="2 2" stroke-width=".8"/>
+    <path d="${d}" fill="none" stroke="${ep.success?'var(--good)':'var(--accent)'}" stroke-width="1.4" vector-effect="non-scaling-stroke"/></svg>`;
+}
+function outcomeBadge(ep){
+  return ep.success?`<span class="badge pass">✓ success</span>`
+    :`<span class="badge fail">✕ fail</span>`;
+}
+function modeChip(ep){
+  if(ep.success)return "";
+  const c=ep.failure_type||"unknown";
+  return `<span class="modechip" style="background:${catColor(c)}">${catLabel(c)}</span>`;
+}
+
+// ---------- OVERVIEW ----------
+function renderOverview(){
+  const p=$("#p-overview"); p.innerHTML="";
+  if(DATA.highlights?.length){
+    for(const h of DATA.highlights){
+      if(h.type==="headroom"){
+        p.append(el("div",{class:"callout",html:
+          `<b>Selection headroom</b> — floor <b>${pct(h.cz)}</b> (candidate_zero) → current <b>${pct(h.verifier)}</b> (verifier) → ceiling <b>${pct(h.oracle)}</b> (Oracle@${h.k||16}). `+
+          `Headroom <b>${(100*(h.oracle-h.cz)).toFixed(1)} pts</b>; verifier captures <b>${pct(h.captured)}</b> of it. `+
+          `<span class="muted">${h.note||""}</span>`}));
+      } else if(h.type==="note"){
+        p.append(el("div",{class:"callout",html:h.html}));
+      }
+    }
+  }
+  p.append(el("div",{class:"section-title"},"Systems"));
+  const cards=el("div",{class:"grid cards"});
+  for(const s of DATA.systems){
+    const m=s.metrics||{};
+    const modebar=el("div",{class:"modebar"});
+    const total=Object.values(s.failure_counts||{}).reduce((a,b)=>a+b,0)||1;
+    for(const c of DATA.mode_order){
+      const n=(s.failure_counts||{})[c]||0; if(!n)continue;
+      modebar.append(el("span",{style:`width:${100*n/total}%;background:${catColor(c)}`,title:`${catLabel(c)}: ${n}`}));
+    }
+    const ci=m.wilson_ci?`95% CI ${pct(m.wilson_ci[0])}–${pct(m.wilson_ci[1])}`:"";
+    cards.append(el("div",{class:"card"},
+      el("h3",{},el("span",{class:"swatch",style:`background:${s.color}`}),s.label,
+        el("span",{class:"sub",style:"margin-left:auto"},s.kind)),
+      el("div",{class:"big"},pct(m.success_rate)),
+      el("div",{class:"sub"},`${m.success_count??"?"}/${m.n??"?"} · ${ci}`),
+      modebar));
+  }
+  p.append(cards);
+
+  if(DATA.contrasts?.length){
+    p.append(el("div",{class:"section-title"},"Paired contrasts"));
+    const t=el("table"); t.append(el("tr",{},el("th",{},"contrast"),el("th",{class:"num"},"Δ success"),
+      el("th",{class:"num"},"McNemar z"),el("th",{},"sig"),el("th",{class:"num"},"wins / losses"),el("th",{},"")));
+    for(const c of DATA.contrasts){
+      const a=sysBy(c.a), b=sysBy(c.b);
+      t.append(el("tr",{},
+        el("td",{},`${a?a.label:c.a} vs ${b?b.label:c.b}`),
+        el("td",{class:"num",style:`color:${c.delta>=0?'var(--good)':'var(--bad)'}`},(c.delta>=0?"+":"")+(100*c.delta).toFixed(1)+" pts"),
+        el("td",{class:"num"},(c.mcnemar_z>=0?"+":"")+c.mcnemar_z.toFixed(2)),
+        el("td",{},el("span",{class:"badge "+(c.sig?"sig":"ns")},c.sig?"sig":"ns")),
+        el("td",{class:"num"},`${c.a_wins} / ${c.b_wins}`),
+        el("td",{class:"muted"},c.note||"")));
+    }
+    p.append(t);
+  }
+}
+
+// ---------- FAILURE MODES ----------
+function renderFailures(){
+  const p=$("#p-failures"); p.innerHTML="";
+  p.append(el("div",{class:"section-title"},"Outcome composition by system"));
+  const legend=el("div",{class:"legend"});
+  for(const c of DATA.mode_order) legend.append(el("span",{},el("span",{class:"swatch",style:`background:${catColor(c)}`}),catLabel(c)));
+  p.append(legend);
+  const wrap=el("div",{class:"card"});
+  for(const s of DATA.systems){
+    const total=Object.values(s.failure_counts||{}).reduce((a,b)=>a+b,0);
+    if(!total){continue;}
+    const track=el("div",{class:"track"});
+    for(const c of DATA.mode_order){
+      const n=(s.failure_counts||{})[c]||0; if(!n)continue;
+      track.append(el("span",{style:`width:${100*n/total}%;background:${catColor(c)}`,title:`${catLabel(c)}: ${n} (${pct(n/total)})`}));
+    }
+    wrap.append(el("div",{class:"barrow"},
+      el("div",{class:"lab"},el("span",{class:"swatch",style:`background:${s.color}`}),s.label),
+      track, el("div",{class:"sub",style:"text-align:right"},total)));
+  }
+  p.append(wrap);
+
+  // counts table
+  p.append(el("div",{class:"section-title"},"Counts"));
+  const t=el("table"); const hdr=el("tr",{},el("th",{},"system"));
+  for(const c of DATA.mode_order)hdr.append(el("th",{class:"num"},catLabel(c)));
+  t.append(hdr);
+  for(const s of DATA.systems){
+    if(!s.failure_counts)continue;
+    const row=el("tr",{},el("td",{},s.label));
+    for(const c of DATA.mode_order)row.append(el("td",{class:"num"},(s.failure_counts[c]||0)||""));
+    t.append(row);
+  }
+  p.append(t);
+  if(DATA.recovery){ // optional cross-tab (base->oracle)
+    p.append(el("div",{class:"section-title"},DATA.recovery.title||"Recovery by base failure mode"));
+    const rt=el("table"); rt.append(el("tr",{},el("th",{},"base failure mode"),el("th",{class:"num"},"count"),el("th",{class:"num"},"recovered"),el("th",{class:"num"},"rate")));
+    for(const r of DATA.recovery.rows)rt.append(el("tr",{},el("td",{},el("span",{class:"modechip",style:`background:${catColor(r.mode)}`},catLabel(r.mode))),
+      el("td",{class:"num"},r.count),el("td",{class:"num"},r.recovered),el("td",{class:"num"},pct(r.recovered/r.count))));
+    p.append(rt);
+  }
+}
+
+// ---------- EPISODES ----------
+let epState={system:null,outcome:"all",mode:"all",sort:"seed",q:"",videosOnly:null};
+function renderEpisodes(){
+  const p=$("#p-episodes"); p.innerHTML="";
+  const withEps=DATA.systems.filter(s=>s.episodes&&s.episodes.length);
+  if(!epState.system||!withEps.find(s=>s.name===epState.system))epState.system=withEps[0]?.name;
+  const ctr=el("div",{class:"controls"});
+  const sysSel=el("select",{onchange:e=>{epState.system=e.target.value;renderEpisodes();}});
+  for(const s of withEps)sysSel.append(el("option",{value:s.name,...(s.name===epState.system?{selected:""}:{})},s.label));
+  const outSel=el("select",{onchange:e=>{epState.outcome=e.target.value;renderEpisodes();}});
+  for(const[v,l]of[["all","all outcomes"],["fail","failures"],["success","successes"]])outSel.append(el("option",{value:v,...(v===epState.outcome?{selected:""}:{})},l));
+  const modeSel=el("select",{onchange:e=>{epState.mode=e.target.value;renderEpisodes();}});
+  modeSel.append(el("option",{value:"all"},"all failure modes"));
+  for(const c of DATA.mode_order)if(c!=="success")modeSel.append(el("option",{value:c,...(c===epState.mode?{selected:""}:{})},catLabel(c)));
+  const sortSel=el("select",{onchange:e=>{epState.sort=e.target.value;renderEpisodes();}});
+  for(const[v,l]of[["seed","sort: seed"],["final_cov","sort: final coverage"],["max_cov","sort: max coverage"],["steps","sort: steps"]])sortSel.append(el("option",{value:v,...(v===epState.sort?{selected:""}:{})},l));
+  const s=sysBy(epState.system);
+  const anyVid=(s.episodes||[]).some(e=>e.video);
+  if(epState.videosOnly===null)epState.videosOnly=anyVid;
+  const vchk=el("label",{class:"chk"},el("input",{type:"checkbox",...(epState.videosOnly?{checked:""}:{}),...(anyVid?{}:{disabled:""}),onchange:ev=>{epState.videosOnly=ev.target.checked;renderEpisodes();}}),"videos only");
+  const q=el("input",{type:"search",placeholder:"seed…",value:epState.q,oninput:e=>{epState.q=e.target.value;renderEpisodes();}});
+  ctr.append(sysSel,outSel,modeSel,sortSel,vchk,q);
+  p.append(ctr);
+  if(!anyVid)p.append(el("div",{class:"callout",html:"No videos rendered for this system yet — showing coverage + metrics. Render with <code>build_dashboard.py record … --videos N</code> (or the oracle video stage), then rebuild."}));
+
+  let eps=(s.episodes||[]).slice();
+  if(epState.videosOnly)eps=eps.filter(e=>e.video);
+  if(epState.outcome==="fail")eps=eps.filter(e=>!e.success);
+  if(epState.outcome==="success")eps=eps.filter(e=>e.success);
+  if(epState.mode!=="all")eps=eps.filter(e=>!e.success&&e.failure_type===epState.mode);
+  if(epState.q)eps=eps.filter(e=>String(e.env_seed).includes(epState.q.trim()));
+  eps.sort((a,b)=>epState.sort==="seed"?a.env_seed-b.env_seed:(b[epState.sort]??-1)-(a[epState.sort]??-1));
+  p.append(el("div",{class:"sub",style:"margin-bottom:10px"},`${eps.length} episodes`));
+
+  const grid=el("div",{class:"grid eps"});
+  for(const e of eps.slice(0,180)){
+    const card=el("div",{class:"ep"});
+    const bar=el("div",{class:"epbar",html:outcomeBadge(e)+modeChip(e)});
+    bar.append(el("span",{class:"seed"},"seed "+e.env_seed));
+    card.append(bar);
+    card.append(videoOrPlaceholder(e));
+    if(e.traj&&e.traj.cov)card.append(el("div",{class:"covwrap",html:covSVG(e)}));
+    card.append(el("div",{class:"mx",html:metricsHTML(e)}));
+    grid.append(card);
+  }
+  p.append(grid);
+  if(eps.length>180)p.append(el("div",{class:"sub",style:"margin-top:10px"},`showing first 180 of ${eps.length}`));
+}
+function videoOrPlaceholder(e,tall=false){
+  if(e.video){
+    const v=el("video",{class:"hero",controls:"",preload:"metadata",playsinline:"",muted:"",loop:""});
+    v.append(el("source",{src:e.video,type:"video/mp4"}));
+    return v;
+  }
+  return el("div",{class:"novideo hero"+(tall?" tall":"")},"video not rendered for this seed");
+}
+function metricsHTML(e){
+  return `cov <b>${e.final_cov!=null?e.final_cov.toFixed(2):"—"}</b> · max <b>${e.max_cov!=null?e.max_cov.toFixed(2):"—"}</b> · steps <b>${e.steps??"—"}</b>`+
+    (e.pos_error!=null?` · err <b>${(e.pos_error*100).toFixed(1)}cm</b>`:"");
+}
+
+// ---------- COMPARE ----------
+let cmpState={a:null,b:null,diffOnly:true};
+function renderCompare(){
+  const p=$("#p-compare"); p.innerHTML="";
+  const withEps=DATA.systems.filter(s=>s.episodes&&s.episodes.length);
+  if(withEps.length<2){p.append(el("div",{class:"muted"},"Need ≥2 systems with per-episode trajectories to compare."));return;}
+  if(!cmpState.a)cmpState.a=withEps[0].name;
+  if(!cmpState.b)cmpState.b=withEps[withEps.length-1].name;
+  const ctr=el("div",{class:"controls"});
+  const mk=(key)=>{const sel=el("select",{onchange:e=>{cmpState[key]=e.target.value;renderCompare();}});
+    for(const s of withEps)sel.append(el("option",{value:s.name,...(s.name===cmpState[key]?{selected:""}:{})},s.label));return sel;};
+  const chk=el("label",{class:"sub",style:"display:flex;gap:6px;align-items:center;cursor:pointer"},
+    el("input",{type:"checkbox",...(cmpState.diffOnly?{checked:""}:{}),onchange:e=>{cmpState.diffOnly=e.target.checked;renderCompare();}}),"only where outcomes differ");
+  ctr.append(mk("a"),el("span",{class:"muted"},"vs"),mk("b"),chk); p.append(ctr);
+
+  const A=sysBy(cmpState.a),B=sysBy(cmpState.b);
+  const bMap=new Map(B.episodes.map(e=>[e.env_seed,e]));
+  let pairs=A.episodes.filter(e=>bMap.has(e.env_seed)).map(e=>[e,bMap.get(e.env_seed)]);
+  if(cmpState.diffOnly)pairs=pairs.filter(([a,b])=>a.success!==b.success);
+  pairs.sort((p1,p2)=>(p2[1].success-p2[0].success)-(p1[1].success-p1[0].success));
+  p.append(el("div",{class:"sub",style:"margin-bottom:10px"},`${pairs.length} paired episodes${cmpState.diffOnly?" where outcomes differ":""}`));
+  const half=(s,e)=>{const d=el("div",{class:"ep"});
+    const bar=el("div",{class:"epbar",html:`<span class="swatch" style="background:${s.color}"></span><b style="font-size:12px">${s.label}</b>`+outcomeBadge(e)+modeChip(e)});
+    d.append(bar, videoOrPlaceholder(e));
+    if(e.traj&&e.traj.cov)d.append(el("div",{class:"covwrap",html:covSVG(e)}));
+    d.append(el("div",{class:"mx",html:metricsHTML(e)}));return d;};
+  const grid=el("div",{class:"grid cmp"});
+  for(const [a,b] of pairs.slice(0,80)){grid.append(half(A,a),half(B,b),el("div",{class:"cmp-seed"},"seed "+a.env_seed));}
+  p.append(grid);
+}
+
+// ---------- shell ----------
+const TABS=[["overview","Overview"],["failures","Failure modes"],["episodes","Episodes"],["compare","Compare"]];
+function initTabs(){
+  const nav=$("#tabs");
+  for(const[id,label]of TABS){
+    nav.append(el("div",{class:"tab"+(id==="overview"?" active":""),"data-tab":id,onclick:()=>show(id)},label));
+  }
+}
+function show(id){
+  $$(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===id));
+  $$(".panel").forEach(pp=>pp.classList.toggle("active",pp.id==="p-"+id));
+  ({overview:renderOverview,failures:renderFailures,episodes:renderEpisodes,compare:renderCompare})[id]();
+}
+$("#themebtn").addEventListener("click",()=>{
+  const cur=document.documentElement.getAttribute("data-theme");
+  const next=cur==="dark"?"light":cur==="light"?"dark":(matchMedia("(prefers-color-scheme:dark)").matches?"light":"dark");
+  document.documentElement.setAttribute("data-theme",next);
+});
+$("#hmeta").textContent=DATA.title||DATA.experiment;
+$("#hpanel").textContent=(DATA.panel?`panel ${DATA.panel.name||""} · seed ${DATA.panel.env_seed} · n=${DATA.panel.num_episodes}`:"")+"  ·  "+(DATA.created||"");
+initTabs(); renderOverview();
+</script>

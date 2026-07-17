@@ -89,6 +89,12 @@ def episode_row(ep: PanelEpisode, result) -> dict:
             "candidate_mean_abs": r.get("candidate_mean_abs"),
             "candidate_smoothness": r.get("candidate_smoothness"),
             "fallback": r.get("fallback", False),
+            # optional selector diagnostics (present for consensus selectors;
+            # None for the standalone / control / verifier systems)
+            "selector_type": r.get("selector_type"),
+            "selector_latency_s": r.get("selector_latency_s"),
+            "mean_pairwise_distance": r.get("mean_pairwise_distance"),
+            "changed_from_candidate_zero": r.get("changed_from_candidate_zero"),
         }
         for r in d.get("replans", [])
     ]

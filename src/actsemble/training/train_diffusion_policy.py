@@ -190,6 +190,7 @@ def train_diffusion_policy(
 
     start_step = 0
     best_val = float("inf")
+    resumed_epoch_state = None  # (loader_gen state at epoch start, batches consumed)
     last_path = output_dir / "last.pt"
     if resume and last_path.exists():
         ckpt = torch.load(last_path, map_location="cpu", weights_only=False)
@@ -200,6 +201,24 @@ def train_diffusion_policy(
         start_step = int(train_state["step"])
         ema.step = int(train_state.get("ema_step", start_step))
         best_val = float(train_state.get("best_val", best_val))
+        # Restore every RNG stream that drives the trajectory so that resuming
+        # to a larger max_steps is identical to a single run to that budget:
+        # the diffusion-noise and timestep generators, the global torch RNG
+        # (covers any in-model dropout), and the dataloader's mid-epoch
+        # position. Without this a resumed run replays noise and batch order
+        # from step 0, so 0->A->B != 0->B.
+        rng = train_state.get("rng_state")
+        if rng is None:
+            raise ValueError(
+                f"{last_path} has no saved rng_state; resume requires a checkpoint "
+                "written by this trainer. Retrain from scratch at the target budget."
+            )
+        noise_gen.set_state(rng["noise"])
+        timestep_gen.set_state(rng["timesteps"])
+        torch.set_rng_state(rng["torch"])
+        if device.type == "cuda" and rng.get("torch_cuda") is not None:
+            torch.cuda.set_rng_state_all(rng["torch_cuda"])
+        resumed_epoch_state = (rng["loader_epoch"], int(rng["batches_into_epoch"]))
 
     logger = TrainingLogger(output_dir)
     save_json(
@@ -238,18 +257,29 @@ def train_diffusion_policy(
         return float(np.mean(losses))
 
     def save(path: Path, *, with_train_state: bool) -> None:
+        train_state = None
+        if with_train_state:
+            train_state = {
+                "step": step, "ema_step": ema.step,
+                "optimizer": optimizer.state_dict(), "best_val": best_val,
+                "rng_state": {
+                    "noise": noise_gen.get_state(),
+                    "timesteps": timestep_gen.get_state(),
+                    "torch": torch.get_rng_state(),
+                    "torch_cuda": (
+                        torch.cuda.get_rng_state_all() if device.type == "cuda" else None
+                    ),
+                    "loader_epoch": epoch_loader_state,
+                    "batches_into_epoch": batches_this_epoch,
+                },
+            }
         DiffusionPolicy.save_checkpoint(
             path,
             config=policy_cfg,
             meta=meta,
             model_state=model.state_dict(),
             ema_state=ema.shadow.state_dict(),
-            train_state=(
-                {"step": step, "ema_step": ema.step, "optimizer": optimizer.state_dict(),
-                 "best_val": best_val}
-                if with_train_state
-                else None
-            ),
+            train_state=train_state,
         )
 
     def snapshot_and_screen() -> None:
@@ -265,14 +295,31 @@ def train_diffusion_policy(
 
     model.train()
     step = start_step
-    data_iter = iter(loader)
+    # epoch_loader_state is the loader generator's state at the start of the
+    # current epoch; batches_this_epoch counts batches drawn since then. The
+    # pair pins the dataloader's exact mid-epoch position for resume (§4).
+    if resumed_epoch_state is not None:
+        loader_gen.set_state(resumed_epoch_state[0])
+        epoch_loader_state = loader_gen.get_state()
+        data_iter = iter(loader)
+        batches_this_epoch = 0
+        for _ in range(resumed_epoch_state[1]):
+            next(data_iter)
+            batches_this_epoch += 1
+    else:
+        epoch_loader_state = loader_gen.get_state()
+        data_iter = iter(loader)
+        batches_this_epoch = 0
     final_train_loss = float("nan")
     while step < total_steps:
         try:
             batch = next(data_iter)
+            batches_this_epoch += 1
         except StopIteration:
+            epoch_loader_state = loader_gen.get_state()
             data_iter = iter(loader)
             batch = next(data_iter)
+            batches_this_epoch = 1
         loss = diffusion_loss(model, batch, noise_gen, timestep_gen)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()

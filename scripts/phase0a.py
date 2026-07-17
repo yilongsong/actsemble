@@ -286,6 +286,44 @@ def cmd_policy_pipeline(args):
           f"dev {dev['success_rate']:.1%}")
 
 
+# --------------------------------------------------- extend training ------
+def cmd_extend_training(args):
+    """Continue an existing run to a larger step budget (resume-and-extend).
+
+    Equivalent to a single run to --to-steps only when the run's last.pt was
+    written by this trainer (carries rng_state); the trainer raises otherwise.
+    Supplementary / diagnostic — NOT part of the frozen 30k protocol; write to
+    a copy of the run dir so the protocol artifact is preserved.
+    """
+    from actsemble.protocol.screening import make_screening_callback
+    from actsemble.training.train_diffusion_policy import train_diffusion_policy
+
+    s = spec()
+    out_dir = Path(args.out)
+    if not (out_dir / "last.pt").exists():
+        raise SystemExit(f"{out_dir}/last.pt not found; nothing to extend")
+    to_steps = int(args.to_steps)
+    tc = json.loads((out_dir / "train_config.json").read_text())
+    dataset = Path(tc["dataset_path"])
+    cfg = merge_config(tc["policy_config"], {"training": {"max_steps": to_steps}})
+    panels = panels_of(s)
+    max_steps = int(s["episode_max_steps"])
+    device = args.device or "cuda"
+    env = _env_for(dataset)
+    try:
+        summary = train_diffusion_policy(
+            policy_cfg=cfg, dataset_path=dataset, output_dir=out_dir, device=device,
+            max_steps=to_steps, resume=True,
+            on_checkpoint=(
+                None if args.no_screen else make_screening_callback(
+                    out_dir, panels["screening"], env=env, device=device, max_steps=max_steps)
+            ),
+        )
+    finally:
+        env.close()
+    print(f"[extend-training] {out_dir} -> {summary['steps']} steps (resumed)")
+
+
 # --------------------------------------------------- verifier pipeline ----
 def cmd_verifier_pipeline(args):
     from actsemble.protocol.verifier_selection import select_verifier
@@ -388,6 +426,67 @@ def cmd_learning_curve(args):
                      f"{'YES' if e['in_target_band'] else 'no'} | {per_seed} |")
     (lc_dir / "summary.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
+
+
+def cmd_plot_learning_curve(args):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    s = spec()
+    results = load_json(OUT / "learning_curve" / "results.json")
+    per_n = {int(k): v for k, v in results["per_n"].items()}
+    ns = sorted(per_n)
+    means = [per_n[n]["mean_success"] for n in ns]
+    lo, hi = s["target_success_range"]
+
+    # Single-entity chart: one hue (mean line), same hue lightened for
+    # per-seed points, neutral gray target band, recessive grid.
+    blue, ink, ink2, surface = "#2a78d6", "#0b0b0b", "#52514e", "#fcfcfb"
+    fig, ax = plt.subplots(figsize=(7.2, 4.6), dpi=150)
+    fig.patch.set_facecolor(surface)
+    ax.set_facecolor(surface)
+    ax.axhspan(lo, hi, color="#8a8a86", alpha=0.14, zorder=0)
+    ax.text(ns[0], hi - 0.012, "target band 25–50%", fontsize=8.5, color=ink2,
+            va="top", ha="left")
+    for n in ns:
+        for seed_entry in per_n[n]["seeds"]:
+            ax.plot(n, seed_entry["dev_success"], "o", ms=5, mfc="none",
+                    mec=blue, mew=1.2, alpha=0.55, zorder=2)
+    ax.plot(ns, means, "-", color=blue, lw=2, zorder=3)
+    ax.plot(ns, means, "o", ms=7, color=blue, zorder=4)
+    for n, m in zip(ns, means):
+        ax.annotate(f"{m:.0%}", (n, m), textcoords="offset points", xytext=(0, 9),
+                    ha="center", fontsize=8.5, color=ink)
+    ax.set_xscale("log")
+    ax.set_xticks(ns)
+    ax.set_xticklabels([str(n) for n in ns], fontsize=9, color=ink)
+    ax.minorticks_off()
+    ax.set_ylim(-0.03, 1.0)
+    ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+    ax.set_yticklabels(["0%", "25%", "50%", "75%", "100%"], fontsize=9, color=ink)
+    ax.set_xlabel("demonstrations (log scale)", fontsize=10, color=ink2)
+    ax.set_ylabel("selected-policy success\n(dev panel, 200 episodes)",
+                  fontsize=10, color=ink2)
+    ax.set_title("PushT-v1 standalone Diffusion Policy learning curve — "
+                 "mean of 3 seeds, rollout-selected checkpoints",
+                 fontsize=10.5, color=ink, pad=12)
+    ax.grid(axis="y", color="#d8d7d2", lw=0.6, zorder=0)
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+    for spine in ("left", "bottom"):
+        ax.spines[spine].set_color("#b9b8b2")
+    handles = [
+        plt.Line2D([], [], color=blue, marker="o", ms=7, lw=2, label="mean of 3 seeds"),
+        plt.Line2D([], [], color=blue, marker="o", ms=5, mfc="none", lw=0,
+                   alpha=0.55, label="individual seed"),
+    ]
+    ax.legend(handles=handles, loc="upper left", frameon=False, fontsize=8.5,
+              labelcolor=ink2)
+    fig.tight_layout()
+    fig.savefig(OUT / "learning_curve" / "plot.png", facecolor=surface)
+    print(f"[plot] {OUT / 'learning_curve' / 'plot.png'}")
 
 
 def cmd_select_primary(args):
@@ -763,14 +862,18 @@ def main() -> int:
     parser.add_argument("--intermediates", type=int, nargs="*", default=None)
     parser.add_argument("--device", default=None)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--to-steps", type=int, default=None, dest="to_steps")
+    parser.add_argument("--no-screen", action="store_true", dest="no_screen")
     args = parser.parse_args()
     stages = {
         "init": cmd_init,
         "master-report": cmd_master_report,
         "make-subsets": cmd_make_subsets,
         "policy-pipeline": cmd_policy_pipeline,
+        "extend-training": cmd_extend_training,
         "verifier-pipeline": cmd_verifier_pipeline,
         "learning-curve": cmd_learning_curve,
+        "plot-learning-curve": cmd_plot_learning_curve,
         "select-primary": cmd_select_primary,
         "finalize-policies": cmd_finalize_policies,
         "pair-setup": cmd_pair_setup,

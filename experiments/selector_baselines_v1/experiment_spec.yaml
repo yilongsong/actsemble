@@ -1,0 +1,55 @@
+# Selector baselines v1 — formal comparison (frozen)
+# Compares selection rules over the SAME frozen Phase 0A seed-4..0 policies and
+# the SAME K=16 candidate tensors. No model is trained or modified here; the
+# verifier ensemble reuses the five existing frozen verifiers. Phase 0A frozen
+# spec / checkpoints / verifier / final-test outputs / conclusion are untouched.
+
+project: actsemble
+experiment: selector_baselines_v1
+purpose: >
+  Does a learned same-data verifier (single or ensembled) beat generic,
+  parameter-free self-consistency (medoid / median / cluster) and plain
+  candidate-zero, at the n=400 operating point? Key contrast: generic
+  self-consistency vs a separately trained same-data verifier.
+
+operating_point:
+  n_demos: 400              # Phase 0A n_demos_primary
+  base_success_approx: 0.50
+
+policy_seeds: [0, 1, 2, 3, 4]        # frozen Phase 0A policies (read-only)
+policy_path: outputs/phase0a_v1/final_policy_runs/policy_seed_{k}/selected_policy.pt
+verifier_path: outputs/phase0a_v1/verifier_runs/verifier_seed_{k}/selected_verifier.pt
+
+num_candidates: 16
+inference: {ema: true, sampler: ddim, steps: 10, temperature: 1.0, H_o: 2, H_p: 16, H_a: 8}
+
+# NEW untouched final-test panel, disjoint from every Phase 0A panel
+# (screening 2000, confirmation 3500, integration 4500, final 1000,
+#  dataset_size_development 5500) and the selector development panel (9100).
+final_panel: {name: selector_final_test, env_seed: 12000, num_episodes: 1200}
+regime: nominal
+
+systems:
+  - candidate_zero                     # baseline: execute candidate 0
+  - full_chunk_medoid                  # consensus (non-learned)
+  - early_weighted_medoid              # consensus (non-learned), lambda=0.25
+  - coordinate_median_projection       # consensus (non-learned)
+  - largest_cluster_medoid             # consensus (non-learned)
+  - verifier_argmax                    # learned: single seed-matched verifier
+  - verifier_ensemble                  # learned: mean score of all 5 verifiers (no new training)
+
+# Candidate identity: init (replan 0) is bitwise-identical; from replan 1 the
+# shared-env rollout carries unbiased ~1e-2 cross-episode GPU nondeterminism.
+# The comparison is computed offline from saved per-episode success (paired),
+# with identity reported as a diagnostic (not a hard gate). Unbiased drift does
+# not bias the mean paired delta.
+
+analysis:
+  replication_unit: policy_seed        # conservative: 5 seeds
+  also_report: pooled_per_episode_mcnemar   # powered: 5 x 1200 paired episodes
+  primary_contrasts:
+    - [verifier_argmax, candidate_zero]
+    - [verifier_ensemble, candidate_zero]
+    - [best_consensus, candidate_zero]
+    - [verifier_argmax, best_consensus]     # learned vs generic self-consistency
+    - [verifier_ensemble, verifier_argmax]  # does ensembling the learned signal help
