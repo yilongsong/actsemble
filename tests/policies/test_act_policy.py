@@ -327,6 +327,33 @@ def test_detr_act_has_separate_projection_and_final_norm():
     assert not hasattr(torch_builtin, "decoder_norm")
 
 
+def test_detr_query_init_is_embedding_scale_and_breaks_positional_symmetry():
+    """Reference ACT/DETR query/cls/memory pos embeddings are nn.Embedding
+    weights (default N(0,1)). A BERT-style std=0.02 leaves the zero-target DETR
+    decoder positionally collapsed (identical action at every chunk slot)."""
+    kwargs = {
+        "obs_feature_dim": 6,
+        "action_dim": 2,
+        "obs_horizon": 1,
+        "prediction_horizon": 8,
+        "hidden_dim": 32,
+        "n_heads": 4,
+        "n_encoder_layers": 2,
+        "n_decoder_layers": 2,
+        "dim_feedforward": 64,
+    }
+    torch.manual_seed(0)
+    detr = ACTModel(pos_embedding="sinusoidal", arch="detr", **kwargs).eval()
+    assert 0.5 < detr.query_embed.std().item() < 1.5  # N(0,1), not 0.02
+    lightweight = ACTModel(arch="torch_builtin", **kwargs)
+    assert lightweight.query_embed.std().item() < 0.1  # lightweight recipe kept
+    obs, z = torch.randn(2, 1, 6), torch.zeros(2, detr.latent_dim)
+    with torch.no_grad():
+        pred = detr.decode(obs, z)
+    # position identity present from init: chunk slots differ
+    assert pred.std(dim=1).mean().item() > 1e-3
+
+
 class _Episode:
     def __init__(self, length, action_dim=2, state_dim=3):
         self.state = np.arange(length * state_dim, dtype=np.float32).reshape(

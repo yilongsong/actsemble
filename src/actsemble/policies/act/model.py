@@ -226,8 +226,17 @@ class ACTModel(nn.Module):
         learned_pos = [self.cls_token, self.memory_pos, self.query_embed]
         if pos_embedding == "learned":
             learned_pos.append(self.style_pos)  # sinusoidal style_pos is a fixed buffer
+        # Reference ACT/DETR keep these as nn.Embedding weights with the DEFAULT
+        # N(0, 1) init. A BERT-style std=0.02 collapses the zero-target DETR
+        # decoder positionally: the query embedding is the ONLY source of position
+        # identity, and at 0.02 scale the position-dependent attention-logit term
+        # is ~(0.02)^2 — the decoder sits in a saddle predicting one action for
+        # all H_p slots, which training at lr 1e-5 may never escape (observed:
+        # position-std 0.000 after 15k steps). torch_builtin keeps 0.02 (its
+        # queries are decoder INPUTS, rescaled by pre-norm LayerNorm).
+        pos_std = 1.0 if arch == "detr" else 0.02
         for p in learned_pos:
-            nn.init.normal_(p, std=0.02)
+            nn.init.normal_(p, std=pos_std)
 
         if arch == "detr":  # DETR _reset_parameters: xavier_uniform on all >1-D weights
             for module in (self.style_layers, self.memory_layers, self.decoder_layers):
