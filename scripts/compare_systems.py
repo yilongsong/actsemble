@@ -27,9 +27,13 @@ from actsemble.utils.serialization import load_json, save_json
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--standalone", required=True, help="baseline result JSON")
-    parser.add_argument("--control", default=None, help="multi-sample control result JSON")
+    parser.add_argument(
+        "--control", default=None, help="multi-sample control result JSON"
+    )
     parser.add_argument("--actsemble", default=None, help="Actsemble result JSON")
-    parser.add_argument("--output", default=None, help="save the comparison report JSON")
+    parser.add_argument(
+        "--output", default=None, help="save the comparison report JSON"
+    )
     args = parser.parse_args()
 
     results = [load_json(args.standalone)]
@@ -47,13 +51,17 @@ def main() -> int:
     base = results[0]
     for r in results[1:]:
         seeds_won = [
-            s for s, (a, b) in zip(base["environment_seeds"],
-                                   zip(r["successes"], base["successes"]))
+            s
+            for s, (a, b) in zip(
+                base["environment_seeds"], zip(r["successes"], base["successes"])
+            )
             if a and not b
         ]
         seeds_lost = [
-            s for s, (a, b) in zip(base["environment_seeds"],
-                                   zip(r["successes"], base["successes"]))
+            s
+            for s, (a, b) in zip(
+                base["environment_seeds"], zip(r["successes"], base["successes"])
+            )
             if b and not a
         ]
         report["systems"][r["system_name"]]["seeds_won_vs_baseline"] = seeds_won
@@ -62,11 +70,15 @@ def main() -> int:
     print(format_report(report))
     for name, s in report["systems"].items():
         if s.get("seeds_won_vs_baseline"):
-            print(f"{name} succeeded where baseline failed on env seeds: "
-                  f"{s['seeds_won_vs_baseline']}")
+            print(
+                f"{name} succeeded where baseline failed on env seeds: "
+                f"{s['seeds_won_vs_baseline']}"
+            )
         if s.get("seeds_lost_vs_baseline"):
-            print(f"{name} failed where baseline succeeded on env seeds: "
-                  f"{s['seeds_lost_vs_baseline']}")
+            print(
+                f"{name} failed where baseline succeeded on env seeds: "
+                f"{s['seeds_lost_vs_baseline']}"
+            )
 
     if args.output:
         save_json(report, args.output)

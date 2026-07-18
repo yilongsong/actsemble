@@ -36,7 +36,7 @@ def pytest_collection_modifyitems(config, items):
         return
     skip = pytest.mark.skip(reason="sim tests run only with -m sim (see smoke_test.py)")
     for item in items:
-        if "sim" in item.keywords:
+        if item.get_closest_marker("sim") is not None:
             item.add_marker(skip)
 
 

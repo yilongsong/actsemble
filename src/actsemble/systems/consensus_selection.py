@@ -58,8 +58,12 @@ class ChunkDistance:
     early-weighted variants.
     """
 
-    def __init__(self, prediction_horizon: int, action_dim: int,
-                 per_timestep_weights: np.ndarray | None = None):
+    def __init__(
+        self,
+        prediction_horizon: int,
+        action_dim: int,
+        per_timestep_weights: np.ndarray | None = None,
+    ):
         self.prediction_horizon = int(prediction_horizon)
         self.action_dim = int(action_dim)
         if per_timestep_weights is None:
@@ -98,8 +102,15 @@ class ConsensusSelector:
 
     name = "consensus"
 
-    def select(self, flat: np.ndarray, valid_idx: np.ndarray, dist: ChunkDistance,
-               record: dict, *, diag_mode: bool = False) -> int:
+    def select(
+        self,
+        flat: np.ndarray,
+        valid_idx: np.ndarray,
+        dist: ChunkDistance,
+        record: dict,
+        *,
+        diag_mode: bool = False,
+    ) -> int:
         raise NotImplementedError
 
 
@@ -123,7 +134,9 @@ class FullChunkMedoidSelector(ConsensusSelector):
         record["medoid_scores"] = {int(i): float(s) for i, s in zip(valid_idx, scores)}
         record["selected_medoid_score"] = float(scores[np.argmin(scores)])
         if diag_mode:
-            record["pairwise_distance_matrix"] = D[np.ix_(valid_idx, valid_idx)].tolist()
+            record["pairwise_distance_matrix"] = D[
+                np.ix_(valid_idx, valid_idx)
+            ].tolist()
         return winner
 
 
@@ -140,10 +153,13 @@ class EarlyWeightedMedoidSelector(ConsensusSelector):
         record["medoid_scores"] = {int(i): float(s) for i, s in zip(valid_idx, scores)}
         record["selected_medoid_score"] = float(scores[np.argmin(scores)])
         record["early_weight_decay"] = self.decay
-        record["timestep_weights"] = (dist.feature_weights.reshape(
-            dist.prediction_horizon, dist.action_dim)[:, 0].tolist())
+        record["timestep_weights"] = dist.feature_weights.reshape(
+            dist.prediction_horizon, dist.action_dim
+        )[:, 0].tolist()
         if diag_mode:
-            record["pairwise_distance_matrix"] = D[np.ix_(valid_idx, valid_idx)].tolist()
+            record["pairwise_distance_matrix"] = D[
+                np.ix_(valid_idx, valid_idx)
+            ].tolist()
         return winner
 
 
@@ -155,7 +171,9 @@ class CoordinateMedianProjectionSelector(ConsensusSelector):
         d_to_median = dist.to_point(flat, median)
         # argmin over valid candidates (ascending order -> lowest-index tie-break)
         winner = int(valid_idx[int(np.argmin(d_to_median[valid_idx]))])
-        record["distance_to_median"] = {int(i): float(d_to_median[i]) for i in valid_idx}
+        record["distance_to_median"] = {
+            int(i): float(d_to_median[i]) for i in valid_idx
+        }
         record["selected_distance_to_median"] = float(d_to_median[winner])
         return winner
 
@@ -234,15 +252,19 @@ def build_selector(sel_type: str, selection_cfg: dict) -> ConsensusSelector:
         return FullChunkMedoidSelector()
     if sel_type == "early_weighted_medoid":
         return EarlyWeightedMedoidSelector(
-            decay=float(selection_cfg.get("early_weight_decay", 0.25)))
+            decay=float(selection_cfg.get("early_weight_decay", 0.25))
+        )
     if sel_type == "coordinate_median_projection":
         return CoordinateMedianProjectionSelector()
     if sel_type == "largest_cluster_medoid":
         clu = selection_cfg.get("clustering", {}) or {}
         return LargestClusterMedoidSelector(
-            max_iterations=int(clu.get("max_iterations", 20)))
-    raise ValueError(f"Unknown consensus selector type: {sel_type!r}; "
-                     f"expected one of {SELECTOR_TYPES}")
+            max_iterations=int(clu.get("max_iterations", 20))
+        )
+    raise ValueError(
+        f"Unknown consensus selector type: {sel_type!r}; "
+        f"expected one of {SELECTOR_TYPES}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -254,9 +276,17 @@ class ConsensusSelectionSystem(ReplanningSystemBase):
     Uses NO learned components. ``diagnostic_mode`` additionally logs the full
     per-replan pairwise distance matrix (off by default for large evals)."""
 
-    def __init__(self, policy, selector: ConsensusSelector, *, num_candidates: int,
-                 action_horizon=None, candidate_root_seed: int = 0,
-                 early_weight_decay: float = 0.25, diagnostic_mode: bool = False):
+    def __init__(
+        self,
+        policy,
+        selector: ConsensusSelector,
+        *,
+        num_candidates: int,
+        action_horizon=None,
+        candidate_root_seed: int = 0,
+        early_weight_decay: float = 0.25,
+        diagnostic_mode: bool = False,
+    ):
         super().__init__(
             policy,
             num_candidates=num_candidates,
@@ -274,8 +304,9 @@ class ConsensusSelectionSystem(ReplanningSystemBase):
             w = None
         self._dist = ChunkDistance(self.prediction_horizon, policy.meta.action_dim, w)
 
-    def _select(self, candidates: torch.Tensor, scores, valid: torch.Tensor,
-                ctx, record: dict) -> int:
+    def _select(
+        self, candidates: torch.Tensor, scores, valid: torch.Tensor, ctx, record: dict
+    ) -> int:
         t0 = time.perf_counter()
         record["selector_type"] = self.selector.name
         valid_np = valid.detach().cpu().numpy().astype(bool)
@@ -299,20 +330,24 @@ class ConsensusSelectionSystem(ReplanningSystemBase):
 
         # normalize on CPU in float64 for exact, GPU-independent determinism
         norm = self.normalizer.normalize_action(
-            candidates.detach().cpu().to(torch.float64)).numpy()
+            candidates.detach().cpu().to(torch.float64)
+        ).numpy()
         flat = np.ascontiguousarray(norm.reshape(norm.shape[0], -1))
         # zero invalid rows so distance math never touches NaN/inf; selection
         # only ever indexes valid candidates, so this cannot change any result.
         flat[~valid_np] = 0.0
 
-        idx = self.selector.select(flat, valid_idx, self._dist, record,
-                                   diag_mode=self.diagnostic_mode)
+        idx = self.selector.select(
+            flat, valid_idx, self._dist, record, diag_mode=self.diagnostic_mode
+        )
 
         # common consensus diagnostics (over valid candidates only)
         full = ChunkDistance(self.prediction_horizon, self._dist.action_dim)
         Dv = full.matrix(flat[valid_idx])
         offdiag = Dv[~np.eye(len(valid_idx), dtype=bool)]
-        record["mean_pairwise_distance"] = float(offdiag.mean()) if offdiag.size else 0.0
+        record["mean_pairwise_distance"] = (
+            float(offdiag.mean()) if offdiag.size else 0.0
+        )
         record["max_pairwise_distance"] = float(offdiag.max()) if offdiag.size else 0.0
         if valid_np[0]:
             pos0 = int(np.where(valid_idx == 0)[0][0])

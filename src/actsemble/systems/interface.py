@@ -13,7 +13,7 @@ same frozen checkpoint, same K, and same seeds therefore sample
 bitwise-identical candidate tensors — the selection rule is the only
 difference. Every replan records a SHA-256 digest of its candidate tensor
 so comparisons can verify identity after the fact (mismatch invalidates a
-paired comparison). Verified by tests/test_system_candidate_identity.py.
+paired comparison). Verified by tests/systems/test_system_candidate_identity.py.
 """
 
 from __future__ import annotations
@@ -35,7 +35,14 @@ from .context import DecisionContext
 def candidate_tensor_hash(candidates: torch.Tensor) -> str:
     """Stable digest of a candidate tensor (float32 bytes, C order)."""
     arr = np.ascontiguousarray(candidates.detach().cpu().numpy().astype(np.float32))
-    return hashlib.sha256(arr.tobytes()).hexdigest()[:16]
+    return hashlib.sha256(arr.tobytes()).hexdigest()
+
+
+def synchronize_device(device: torch.device | str) -> None:
+    """Synchronize CUDA for honest wall-clock inference measurements."""
+    device = torch.device(device)
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
 
 
 @runtime_checkable
@@ -64,10 +71,14 @@ class ReplanningSystemBase:
     ):
         self.policy = policy
         self.num_candidates = int(num_candidates)
+        if self.num_candidates < 1:
+            raise ValueError(f"num_candidates must be >= 1, got {self.num_candidates}")
         meta = policy.meta  # DiffusionPolicy exposes PolicyMeta
         self.obs_horizon = meta.obs_horizon
         self.prediction_horizon = meta.prediction_horizon
-        self.action_horizon = int(action_horizon or meta.action_horizon)
+        self.action_horizon = int(
+            meta.action_horizon if action_horizon is None else action_horizon
+        )
         if not 1 <= self.action_horizon <= self.prediction_horizon:
             raise ValueError(
                 f"action_horizon {self.action_horizon} must be in [1, {self.prediction_horizon}]"
@@ -83,7 +94,7 @@ class ReplanningSystemBase:
 
     def set_execution_offset(self, offset: int) -> None:
         offset = int(offset)
-        if not 0 <= offset or offset + self.action_horizon > self.prediction_horizon:
+        if offset < 0 or offset + self.action_horizon > self.prediction_horizon:
             raise ValueError(
                 f"execution_offset {offset} + action_horizon {self.action_horizon} "
                 f"must fit within prediction_horizon {self.prediction_horizon}"
@@ -119,7 +130,9 @@ class ReplanningSystemBase:
                 np.mean([r["policy_latency_s"] for r in replans]) if replans else 0.0
             ),
             "mean_component_latency_s": float(
-                np.mean([r.get("component_latency_s", 0.0) for r in replans]) if replans else 0.0
+                np.mean([r.get("component_latency_s", 0.0) for r in replans])
+                if replans
+                else 0.0
             ),
             "selected_indices": [r["selected_index"] for r in replans],
             "selection_change_count": int(selection_changes),
@@ -142,8 +155,16 @@ class ReplanningSystemBase:
 
     def _frame(self, observation: StateObservation) -> np.ndarray:
         state = np.asarray(observation.state, dtype=np.float32).reshape(-1)
+        if state.shape != (self.policy.meta.state_dim,):
+            raise ValueError(
+                f"Observation state shape {state.shape} != expected {(self.policy.meta.state_dim,)}"
+            )
         if self.include_previous_action:
             prev = np.asarray(observation.previous_action, dtype=np.float32).reshape(-1)
+            if prev.shape != (self._action_dim,):
+                raise ValueError(
+                    f"Previous-action shape {prev.shape} != expected {(self._action_dim,)}"
+                )
             return np.concatenate([state, prev])
         return state
 
@@ -181,7 +202,9 @@ class ReplanningSystemBase:
             components=self.components(),
         )
 
-    def _decide(self, ctx: DecisionContext, record: dict) -> tuple[torch.Tensor, int, int]:
+    def _decide(
+        self, ctx: DecisionContext, record: dict
+    ) -> tuple[torch.Tensor, int, int]:
         """Run the base-pipeline decision stages for one replan: Propose ->
         Predict -> Score -> Select -> Schedule. Records the §11 candidate hash
         and the selected index into ``record`` and appends it to
@@ -196,9 +219,25 @@ class ReplanningSystemBase:
         preds = self._predict(candidates, ctx)
         scores = self._score(candidates, preds, valid, ctx, record)
         selected = int(self._select(candidates, scores, valid, ctx, record))
+        if not 0 <= selected < self.num_candidates:
+            raise RuntimeError(
+                f"Selector returned index {selected}, expected [0, {self.num_candidates})"
+            )
+        if not bool(valid[selected]):
+            valid_indices = torch.nonzero(valid, as_tuple=False).flatten()
+            if valid_indices.numel() == 0:
+                raise RuntimeError("Policy produced no finite candidate action chunks")
+            record["fallback"] = True
+            record["fallback_reason"] = "selected_candidate_invalid"
+            selected = int(valid_indices[0].item())
         record["selected_index"] = selected
-        self._replan_records.append(record)
         h_a = int(self._schedule(candidates, selected, ctx))
+        if not 1 <= h_a or self.execution_offset + h_a > self.prediction_horizon:
+            raise RuntimeError(
+                f"Scheduled horizon {h_a} does not fit execution offset "
+                f"{self.execution_offset} and prediction horizon {self.prediction_horizon}"
+            )
+        self._replan_records.append(record)
         return candidates, selected, h_a
 
     def _replan(self) -> None:
@@ -209,7 +248,10 @@ class ReplanningSystemBase:
         # any Score/Select swap keeps the K-tensor bitwise-identical. The
         # temporal variant reuses ``_decide`` with a control-time cache (§2.3).
         ctx = self._context()
-        record: dict = {"replan_index": self._replan_index, "episode_seed": self.episode_seed}
+        record: dict = {
+            "replan_index": self._replan_index,
+            "episode_seed": self.episode_seed,
+        }
         candidates, selected, h_a = self._decide(ctx, record)
         chunk = candidates[selected].detach().cpu().numpy().astype(np.float32)
         off = self.execution_offset
@@ -222,23 +264,33 @@ class ReplanningSystemBase:
     def _propose(self, ctx: DecisionContext, record: dict) -> torch.Tensor:
         """Propose: sample the shared K-candidate tensor; record its §11 hash and
         compact per-candidate diagnostics (mean |a|, mean |Δa|)."""
+        policy_device = getattr(self.policy, "device", torch.device("cpu"))
+        synchronize_device(policy_device)
         t0 = time.perf_counter()
         candidates = self.policy.sample_action_chunks(
             ctx.observation_history,
             num_samples=self.num_candidates,
             generator=self._candidate_generator(),
         )
+        synchronize_device(candidates.device)
         record["policy_latency_s"] = time.perf_counter() - t0
-        if candidates.shape != (
+        expected_shape = (
             self.num_candidates,
             self.prediction_horizon,
-            candidates.shape[-1],
-        ):
+            self._action_dim,
+        )
+        if candidates.ndim != 3 or tuple(candidates.shape) != expected_shape:
             raise RuntimeError(f"Bad candidate shape {tuple(candidates.shape)}")
         with torch.no_grad():
-            record["candidate_mean_abs"] = candidates.abs().mean(dim=(1, 2)).cpu().tolist()
+            record["candidate_mean_abs"] = (
+                candidates.abs().mean(dim=(1, 2)).cpu().tolist()
+            )
             record["candidate_smoothness"] = (
-                (candidates[:, 1:] - candidates[:, :-1]).abs().mean(dim=(1, 2)).cpu().tolist()
+                (candidates[:, 1:] - candidates[:, :-1])
+                .abs()
+                .mean(dim=(1, 2))
+                .cpu()
+                .tolist()
             )
         record["candidate_hash"] = candidate_tensor_hash(candidates)
         return candidates
@@ -247,14 +299,26 @@ class ReplanningSystemBase:
         """Predict (optional, Track C): forecast candidate consequences. Default none."""
         return None
 
-    def _score(self, candidates: torch.Tensor, preds, valid: torch.Tensor,
-               ctx: DecisionContext, record: dict):
+    def _score(
+        self,
+        candidates: torch.Tensor,
+        preds,
+        valid: torch.Tensor,
+        ctx: DecisionContext,
+        record: dict,
+    ):
         """Score (optional): per-candidate scalar ``[K]`` (higher = better).
         Return None to let Select fall through to candidate-zero."""
         return None
 
-    def _select(self, candidates: torch.Tensor, scores, valid: torch.Tensor,
-                ctx: DecisionContext, record: dict) -> int:
+    def _select(
+        self,
+        candidates: torch.Tensor,
+        scores,
+        valid: torch.Tensor,
+        ctx: DecisionContext,
+        record: dict,
+    ) -> int:
         """Select: choose the executed candidate index. Default = fallback-aware
         argmax over ``scores`` (candidate-zero when scores are absent or all
         invalid). A Score-then-argmax system need only implement ``_score``."""
@@ -270,13 +334,17 @@ class ReplanningSystemBase:
         masked[~mask] = float("-inf")
         return int(torch.argmax(masked).item())
 
-    def _schedule(self, candidates: torch.Tensor, selected: int, ctx: DecisionContext) -> int:
+    def _schedule(
+        self, candidates: torch.Tensor, selected: int, ctx: DecisionContext
+    ) -> int:
         """Schedule: how many actions of the selected chunk to execute before
         replanning. Default = the fixed action horizon."""
         return self.action_horizon
 
 
-def check_same_data(policy, components: list, *, require_same_dataset_hash: bool = True) -> None:
+def check_same_data(
+    policy, components: list, *, require_same_dataset_hash: bool = True
+) -> None:
     """Fairness safeguard: reject assembling models from different data."""
     if not require_same_dataset_hash:
         return
@@ -292,10 +360,18 @@ def check_same_data(policy, components: list, *, require_same_dataset_hash: bool
             problems.append("split_hash differs")
         if cm.get("normalization") != pm.normalization:
             problems.append("normalization statistics differ")
-        for key in ("obs_horizon", "prediction_horizon", "include_previous_action",
-                    "state_dim", "action_dim"):
+        for key in (
+            "obs_horizon",
+            "prediction_horizon",
+            "action_horizon",
+            "include_previous_action",
+            "state_dim",
+            "action_dim",
+        ):
             if cm.get(key) != getattr(pm, key):
-                problems.append(f"{key}: policy {getattr(pm, key)} != component {cm.get(key)}")
+                problems.append(
+                    f"{key}: policy {getattr(pm, key)} != component {cm.get(key)}"
+                )
         # Chunk window alignment must match: a scorer trained on future-only
         # positive chunks cannot rank diffusion-policy-aligned candidate chunks.
         pa = pm.extra.get("window_alignment", "future_only")
@@ -304,5 +380,6 @@ def check_same_data(policy, components: list, *, require_same_dataset_hash: bool
             problems.append(f"window_alignment: policy {pa} != component {ca}")
         if problems:
             raise ValueError(
-                "Component/policy same-data contract violated:\n  - " + "\n  - ".join(problems)
+                "Component/policy same-data contract violated:\n  - "
+                + "\n  - ".join(problems)
             )

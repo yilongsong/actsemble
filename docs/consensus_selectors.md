@@ -120,7 +120,7 @@ distances, and iteration count.
    `factory.build_system` and `SYSTEM_TYPES` pick it up automatically.
 3. Add `configs/systems/<name>.yaml` (K=16, `components: []`, `selection.type:
    <name>`, no component-checkpoint field).
-4. Add unit tests to `tests/test_consensus_selectors.py` (determinism,
+4. Add unit tests to `tests/systems/test_consensus_selectors.py` (determinism,
    no-mutation, invalid handling, and a handcrafted case with a known answer).
 
 ## Scientific protocol

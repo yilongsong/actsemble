@@ -101,7 +101,9 @@ class ACTPolicy:
             )
         cond = self._normalize_history(observation_history)
         obs = torch.from_numpy(cond).to(self.device).unsqueeze(0)  # [1, H_o, feat]
-        z = torch.zeros(1, self.model.latent_dim, device=self.device)  # ACT inference: z=0
+        z = torch.zeros(
+            1, self.model.latent_dim, device=self.device
+        )  # ACT inference: z=0
         chunk_norm = self.model.decode(obs, z)  # [1, H_p, A] normalized
         chunk = self.normalizer.unnormalize_action(chunk_norm)
         low = torch.as_tensor(self._action_low, device=chunk.device)
@@ -155,9 +157,12 @@ class ACTPolicy:
         *,
         device: torch.device | str = "cpu",
         use_ema: bool = True,
+        _checkpoint_payload: dict | None = None,
     ) -> "ACTPolicy":
         path = Path(path)
-        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        ckpt = _checkpoint_payload
+        if ckpt is None:
+            ckpt = torch.load(path, map_location="cpu", weights_only=False)
         if ckpt.get("kind") != "actsemble_act_policy":
             raise ValueError(f"{path} is not an Actsemble ACT-policy checkpoint")
         config = ckpt["config"]

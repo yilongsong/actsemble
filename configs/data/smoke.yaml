@@ -1,0 +1,7 @@
+# Tiny dataset for smoke tests: first 20 successful source episodes.
+task_id: PushT-v1
+control_mode: pd_ee_delta_pose
+sim_backend: physx_cuda
+max_episodes: 20
+seed: 0
+# trajectory_path: null  -> auto-locate under ~/.maniskill/demos/PushT-v1/

@@ -17,7 +17,12 @@ class StandaloneDiffusionSystem(ReplanningSystemBase):
     name = "standalone_diffusion"
 
     def __init__(
-        self, policy, *, num_candidates: int = 1, action_horizon=None, candidate_root_seed: int = 0
+        self,
+        policy,
+        *,
+        num_candidates: int = 1,
+        action_horizon=None,
+        candidate_root_seed: int = 0,
     ):
         super().__init__(
             policy,
@@ -25,4 +30,5 @@ class StandaloneDiffusionSystem(ReplanningSystemBase):
             action_horizon=action_horizon,
             candidate_root_seed=candidate_root_seed,
         )
+
     # Selection = the base-pipeline default (candidate zero); no override.

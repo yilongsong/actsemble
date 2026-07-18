@@ -17,7 +17,9 @@ def to_numpy_state(obs) -> np.ndarray:
     arr = np.asarray(arr, dtype=np.float32)
     if arr.ndim == 2:
         if arr.shape[0] != 1:
-            raise ValueError(f"Expected a single-env observation, got shape {arr.shape}")
+            raise ValueError(
+                f"Expected a single-env observation, got shape {arr.shape}"
+            )
         arr = arr[0]
     if arr.ndim != 1:
         raise ValueError(f"Expected flat state observation, got shape {arr.shape}")

@@ -42,11 +42,14 @@ class MultiSampleControlSystem(ReplanningSystemBase):
         self.selection_rule = selection_rule
         self.selection_seed = int(selection_seed)
 
-    def _select(self, candidates: torch.Tensor, scores, valid: torch.Tensor,
-                ctx, record: dict) -> int:
+    def _select(
+        self, candidates: torch.Tensor, scores, valid: torch.Tensor, ctx, record: dict
+    ) -> int:
         if self.selection_rule == "first_candidate":
             return 0
         rng = np.random.default_rng(
-            derive_seed(self.selection_seed, "select", self.episode_seed, ctx.replan_index)
+            derive_seed(
+                self.selection_seed, "select", self.episode_seed, ctx.replan_index
+            )
         )
         return int(rng.integers(self.num_candidates))

@@ -9,7 +9,11 @@ Enforces the fairness safeguards before assembly:
 from __future__ import annotations
 
 from .candidate_reranking import CandidateRerankingActsemble
-from .consensus_selection import SELECTOR_TYPES, ConsensusSelectionSystem, build_selector
+from .consensus_selection import (
+    SELECTOR_TYPES,
+    ConsensusSelectionSystem,
+    build_selector,
+)
 from .interface import ReplanningSystemBase, check_same_data
 from .multisample_control import MultiSampleControlSystem
 from .standalone import StandaloneDiffusionSystem
@@ -17,8 +21,13 @@ from .temporal_ensemble import TemporalEnsembleSystem
 from .verifier_ensemble import MeanScoreRerankingActsemble
 
 SYSTEM_TYPES = (
-    "candidate_zero", "uniform_random", "first_candidate", "highest_component_score",
-    "mean_component_score", "temporal_ensemble", *SELECTOR_TYPES,
+    "candidate_zero",
+    "uniform_random",
+    "first_candidate",
+    "highest_component_score",
+    "mean_component_score",
+    "temporal_ensemble",
+    *SELECTOR_TYPES,
 )
 
 
@@ -38,7 +47,9 @@ def build_system(
     # any system using a Diffusion-Policy-aligned checkpoint executes the action
     # for time t (chunk index H_o-1), not a past-aligned action, even when the
     # system config does not mention it. An explicit execution.action_offset wins.
-    align = (getattr(policy.meta, "extra", None) or {}).get("window_alignment", "future_only")
+    align = (getattr(policy.meta, "extra", None) or {}).get(
+        "window_alignment", "future_only"
+    )
     default_offset = (policy.meta.obs_horizon - 1) if align == "diffusion_policy" else 0
     offset = int(system_cfg.get("execution", {}).get("action_offset", default_offset))
     if offset:
@@ -59,7 +70,9 @@ def _build_system_impl(
     num_candidates = int(policy_cfg.get("num_candidates", 1))
     action_horizon = system_cfg.get("execution", {}).get("action_horizon")
     if not policy_cfg.get("frozen", True):
-        raise ValueError("Actsemble systems require frozen policies (policy.frozen must be true)")
+        raise ValueError(
+            "Actsemble systems require frozen policies (policy.frozen must be true)"
+        )
 
     require_same = bool(selection.get("require_same_dataset_hash", True))
     check_same_data(policy, components, require_same_dataset_hash=require_same)
@@ -125,8 +138,11 @@ def _build_system_impl(
         if len(components) < 1:
             raise ValueError("mean_component_score needs at least one component")
         return MeanScoreRerankingActsemble(
-            policy, components, num_candidates=num_candidates,
-            action_horizon=action_horizon, candidate_root_seed=candidate_root_seed,
+            policy,
+            components,
+            num_candidates=num_candidates,
+            action_horizon=action_horizon,
+            candidate_root_seed=candidate_root_seed,
         )
     if sel_type == "highest_component_score":
         if len(components) != 1:
@@ -140,4 +156,6 @@ def _build_system_impl(
             action_horizon=action_horizon,
             candidate_root_seed=candidate_root_seed,
         )
-    raise ValueError(f"Unknown selection.type: {sel_type!r}; expected one of {SYSTEM_TYPES}")
+    raise ValueError(
+        f"Unknown selection.type: {sel_type!r}; expected one of {SYSTEM_TYPES}"
+    )

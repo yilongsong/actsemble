@@ -45,11 +45,20 @@ from ..types import RobotAction
 from .interface import ReplanningSystemBase
 
 AGGREGATIONS = ("latest", "mean", "projection", "medoid")
-RECENCY = ("recent", "oldest")  # weight direction: freshest-highest vs oldest-highest (ACT)
+RECENCY = (
+    "recent",
+    "oldest",
+)  # weight direction: freshest-highest vs oldest-highest (ACT)
 
 
-def aggregate_predictions(preds: np.ndarray, ages: np.ndarray, *, decay: float,
-                          mode: str, recency: str = "recent") -> np.ndarray:
+def aggregate_predictions(
+    preds: np.ndarray,
+    ages: np.ndarray,
+    *,
+    decay: float,
+    mode: str,
+    recency: str = "recent",
+) -> np.ndarray:
     """Combine the overlapping predictions for one control step into one action.
 
     ``preds`` is ``[n, A]`` (n >= 1 predictions for the current control-time,
@@ -66,10 +75,20 @@ def aggregate_predictions(preds: np.ndarray, ages: np.ndarray, *, decay: float,
     ages = np.asarray(ages, dtype=np.float64)
     if preds.ndim != 2 or preds.shape[0] < 1:
         raise ValueError(f"preds must be [n>=1, A], got {preds.shape}")
+    if ages.shape != (preds.shape[0],):
+        raise ValueError(f"ages shape {ages.shape} != expected {(preds.shape[0],)}")
+    if not np.isfinite(preds).all() or not np.isfinite(ages).all():
+        raise ValueError("preds and ages must be finite")
+    if decay < 0:
+        raise ValueError(f"decay must be nonnegative, got {decay}")
+    if recency not in RECENCY:
+        raise ValueError(f"recency must be one of {RECENCY}, got {recency!r}")
     if mode == "latest":
         return preds[int(np.argmin(ages))].astype(np.float32)
     sign = -1.0 if recency == "recent" else 1.0  # oldest (ACT) flips the decay sign
-    w = np.exp(sign * float(decay) * ages)
+    logits = sign * float(decay) * ages
+    logits -= np.max(logits)
+    w = np.exp(logits)
     total = w.sum()
     w = w / total if total > 0 else np.full_like(w, 1.0 / len(w))
     mean = (w[:, None] * preds).sum(axis=0)  # [A]
@@ -83,7 +102,9 @@ def aggregate_predictions(preds: np.ndarray, ages: np.ndarray, *, decay: float,
         pair = np.linalg.norm(preds[:, None, :] - preds[None, :, :], axis=2)  # [n, n]
         cost = (pair * w[None, :]).sum(axis=1)  # [n]
         return preds[int(np.argmin(cost))].astype(np.float32)
-    raise ValueError(f"unknown temporal aggregation mode {mode!r}; expected {AGGREGATIONS}")
+    raise ValueError(
+        f"unknown temporal aggregation mode {mode!r}; expected {AGGREGATIONS}"
+    )
 
 
 class TemporalEnsembleSystem(ReplanningSystemBase):
@@ -113,12 +134,16 @@ class TemporalEnsembleSystem(ReplanningSystemBase):
             candidate_root_seed=candidate_root_seed,
         )
         if aggregation not in AGGREGATIONS:
-            raise ValueError(f"aggregation must be one of {AGGREGATIONS}, got {aggregation!r}")
+            raise ValueError(
+                f"aggregation must be one of {AGGREGATIONS}, got {aggregation!r}"
+            )
         if recency not in RECENCY:
             raise ValueError(f"recency must be one of {RECENCY}, got {recency!r}")
         self.aggregation = aggregation
         self.recency = recency
-        self.name = f"temporal_{aggregation}" + ("" if recency == "recent" else f"_{recency}")
+        self.name = f"temporal_{aggregation}" + (
+            "" if recency == "recent" else f"_{recency}"
+        )
         self.decay = float(decay)
         if self.decay < 0:
             raise ValueError("decay (EWMA rate) must be >= 0")
@@ -150,7 +175,8 @@ class TemporalEnsembleSystem(ReplanningSystemBase):
     def _covers(self, t: int) -> bool:
         off = self.execution_offset
         return any(
-            0 <= t - origin < self.window and off + (t - origin) < self.prediction_horizon
+            0 <= t - origin < self.window
+            and off + (t - origin) < self.prediction_horizon
             for origin, _ in self._plan_cache
         )
 
@@ -161,7 +187,9 @@ class TemporalEnsembleSystem(ReplanningSystemBase):
             "episode_seed": self.episode_seed,
             "control_step": self._control_step,
         }
-        candidates, selected, _h_a = self._decide(ctx, record)  # cadence, not H_a, drives replans
+        candidates, selected, _h_a = self._decide(
+            ctx, record
+        )  # cadence, not H_a, drives replans
         chunk = candidates[selected].detach().cpu().numpy().astype(np.float32)
         self._plan_cache.append((self._control_step, chunk))
         oldest_covering = self._control_step - self.window + 1
@@ -174,14 +202,19 @@ class TemporalEnsembleSystem(ReplanningSystemBase):
         preds, ages = [], []
         for origin, chunk in reversed(self._plan_cache):  # freshest first
             age = t - origin
-            idx = off + age  # DP-aligned chunks put the action for the origin step at index off
+            idx = (
+                off + age
+            )  # DP-aligned chunks put the action for the origin step at index off
             if 0 <= age < self.window and idx < self.prediction_horizon:
                 preds.append(chunk[idx])
                 ages.append(age)
         self._ensemble_sizes.append(len(preds))
         return aggregate_predictions(
-            np.stack(preds), np.asarray(ages), decay=self.decay,
-            mode=self.aggregation, recency=self.recency,
+            np.stack(preds),
+            np.asarray(ages),
+            decay=self.decay,
+            mode=self.aggregation,
+            recency=self.recency,
         )
 
     def diagnostics(self) -> dict:

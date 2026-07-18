@@ -2,7 +2,7 @@
 
 Operates ONLY on frozen dataset files. This module (and everything it
 imports) must never import ManiSkill, gymnasium, or any rollout code —
-enforced by tests/test_training_has_no_sim_dependency.py.
+enforced by tests/training/test_training_has_no_sim_dependency.py.
 
 Protocol properties (docs/checkpoint_selection_protocol.md):
 * every stochastic stage has its own named generator derived from the
@@ -24,7 +24,6 @@ import math
 from pathlib import Path
 from typing import Callable
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -32,6 +31,7 @@ from torch.utils.data import DataLoader
 from ..data.normalization import Normalizer, compute_stats
 from ..data.reader import DatasetReader
 from ..data.torch_dataset import DiffusionWindowDataset
+from ..data.validation import validate_dataset
 from ..data.windows import split_episodes
 from ..policies.diffusion.policy import (
     DiffusionPolicy,
@@ -44,7 +44,7 @@ from ..utils.rng_state import preserve_rng_states
 from ..utils.serialization import save_json
 from .logging import TrainingLogger
 
-# type: on_checkpoint(step=int, checkpoint_path=Path) -> None
+# Callback receives keyword arguments including ``step`` and ``checkpoint_path``.
 CheckpointCallback = Callable[..., None]
 
 
@@ -57,9 +57,14 @@ class EMA:
     (the authoritative Diffusion-Policy setting: power 0.75, max 0.9999)."""
 
     def __init__(
-        self, model: torch.nn.Module, decay: float = 0.999, *,
-        power: float | None = None, inv_gamma: float = 1.0,
-        min_value: float = 0.0, max_value: float = 0.9999,
+        self,
+        model: torch.nn.Module,
+        decay: float = 0.999,
+        *,
+        power: float | None = None,
+        inv_gamma: float = 1.0,
+        min_value: float = 0.0,
+        max_value: float = 0.9999,
     ):
         self.decay = float(decay)
         self.power = None if power is None else float(power)
@@ -74,7 +79,9 @@ class EMA:
     def _decay(self) -> float:
         if self.power is None:
             return min(self.decay, (1 + self.step) / (10 + self.step))
-        s = self.step - 1  # diffusers: max(0, optimization_step - update_after_step - 1)
+        s = (
+            self.step - 1
+        )  # diffusers: max(0, optimization_step - update_after_step - 1)
         if s <= 0:
             return 0.0
         d = 1.0 - (1.0 + s / self.inv_gamma) ** (-self.power)
@@ -90,8 +97,12 @@ class EMA:
                 ema_b.copy_(b)
 
 
-def resolve_total_steps(tcfg: dict, n_train_windows: int, batch_size: int,
-                        max_steps_override: int | None = None) -> int:
+def resolve_total_steps(
+    tcfg: dict,
+    n_train_windows: int,
+    batch_size: int,
+    max_steps_override: int | None = None,
+) -> int:
     """Training budget, dataset-adaptive. Precedence: ``--max-steps`` override >
     explicit ``training.max_steps`` > ``training.max_epochs`` (converted to steps
     via this dataset's window count) > 10000. Expressing the budget in EPOCHS
@@ -102,7 +113,9 @@ def resolve_total_steps(tcfg: dict, n_train_windows: int, batch_size: int,
     if tcfg.get("max_steps") is not None:
         return int(tcfg["max_steps"])
     if tcfg.get("max_epochs") is not None:
-        steps_per_epoch = max(1, n_train_windows // int(batch_size))  # matches drop_last
+        steps_per_epoch = max(
+            1, n_train_windows // int(batch_size)
+        )  # matches drop_last
         return int(tcfg["max_epochs"]) * steps_per_epoch
     return 10000
 
@@ -126,7 +139,9 @@ def build_lr_scheduler(optimizer, tcfg: dict, total_steps: int):
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
-def make_policy_meta(reader: DatasetReader, policy_cfg: dict, split_hash: str, norm_stats) -> PolicyMeta:
+def make_policy_meta(
+    reader: DatasetReader, policy_cfg: dict, split_hash: str, norm_stats
+) -> PolicyMeta:
     action_def = json.loads(reader.metadata.action_definition)
     bounds = action_def.get("bounds")
     if bounds is None:
@@ -153,6 +168,15 @@ def make_policy_meta(reader: DatasetReader, policy_cfg: dict, split_hash: str, n
     for key in ("subset_hash", "subset_size", "subset_seed", "source_bundle_sha256"):
         if key in reader.metadata.extra:
             meta.extra[key] = reader.metadata.extra[key]
+    meta.extra["environment"] = {
+        "simulator": reader.metadata.simulator,
+        "simulator_version": reader.metadata.simulator_version,
+        "robot": reader.metadata.robot,
+        "observation_mode": reader.metadata.observation_mode,
+        "control_frequency": reader.metadata.control_frequency,
+        "state_dimension": reader.metadata.state_dimension,
+        "action_dimension": reader.metadata.action_dimension,
+    }
     # Window alignment used at training time (future_only | diffusion_policy);
     # the eval system's execution offset must match (H_o-1 for diffusion_policy).
     meta.extra["window_alignment"] = str(
@@ -184,6 +208,11 @@ def train_diffusion_policy(
 ) -> dict:
     """Train; returns a summary dict with checkpoint paths and final losses."""
     output_dir = Path(output_dir)
+    if output_dir.exists() and any(output_dir.iterdir()) and not resume:
+        raise FileExistsError(
+            f"Training output directory is not empty: {output_dir}. "
+            "Use a new directory or pass resume=True."
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     tcfg = policy_cfg.get("training", {})
     seed = int(tcfg.get("seed", 0))
@@ -192,6 +221,7 @@ def train_diffusion_policy(
     gen_seeds = named_training_seeds(seed)
 
     reader = DatasetReader(dataset_path)
+    validate_dataset(reader)
     split = split_episodes(
         reader.episode_ids,
         val_fraction=float(tcfg.get("val_fraction", 0.1)),
@@ -206,15 +236,31 @@ def train_diffusion_policy(
     ep_by_id = {ep.episode_id: ep for ep in reader.episodes}
     train_eps = [ep_by_id[i] for i in split.train_episode_ids]
     val_eps = [ep_by_id[i] for i in split.val_episode_ids]
-    ds_kwargs = dict(
+    window_alignment = str(
+        policy_cfg.get("action", {}).get("window_alignment", "future_only")
+    )
+    train_ds = DiffusionWindowDataset(
+        train_eps,
+        normalizer,
         obs_horizon=meta.obs_horizon,
         prediction_horizon=meta.prediction_horizon,
         include_previous_action=meta.include_previous_action,
-        alignment=str(policy_cfg.get("action", {}).get("window_alignment", "future_only")),
-        action_horizon=meta.action_horizon,  # reference SequenceSampler terminal range
+        alignment=window_alignment,
+        action_horizon=meta.action_horizon,
     )
-    train_ds = DiffusionWindowDataset(train_eps, normalizer, **ds_kwargs)
-    val_ds = DiffusionWindowDataset(val_eps, normalizer, **ds_kwargs) if val_eps else None
+    val_ds = (
+        DiffusionWindowDataset(
+            val_eps,
+            normalizer,
+            obs_horizon=meta.obs_horizon,
+            prediction_horizon=meta.prediction_horizon,
+            include_previous_action=meta.include_previous_action,
+            alignment=window_alignment,
+            action_horizon=meta.action_horizon,
+        )
+        if val_eps
+        else None
+    )
 
     batch_size = int(tcfg.get("batch_size", 256))
     loader_gen = torch_generator(gen_seeds["dataloader_order"])
@@ -256,8 +302,8 @@ def train_diffusion_policy(
     mask_padding = bool(tcfg.get("mask_padded_actions", False))
     total_steps = resolve_total_steps(tcfg, len(train_ds), batch_size, max_steps)
     steps_per_epoch = max(1, len(train_ds) // batch_size)  # matches drop_last
-    # Optional cosine LR (authoritative DP). Not restored on resume (canonical
-    # trains one-shot; the lightweight config uses constant LR).
+    # Optional cosine LR (authoritative DP). Its state and planned total budget
+    # are part of the exact-resume contract below.
     lr_scheduler = build_lr_scheduler(optimizer, tcfg, total_steps)
     log_every = int(tcfg.get("log_every", 50))
     eval_every = int(tcfg.get("eval_every", max(1, min(500, total_steps))))
@@ -271,12 +317,28 @@ def train_diffusion_policy(
     best_val = float("inf")
     resumed_epoch_state = None  # (loader_gen state at epoch start, batches consumed)
     last_path = output_dir / "last.pt"
-    if resume and last_path.exists():
+    if resume and not last_path.exists():
+        raise FileNotFoundError(f"Cannot resume: checkpoint not found: {last_path}")
+    if resume:
         ckpt = torch.load(last_path, map_location="cpu", weights_only=False)
         model.load_state_dict(ckpt["model_state"])
         ema.shadow.load_state_dict(ckpt["ema_state"])
         train_state = ckpt.get("train_state") or {}
         optimizer.load_state_dict(train_state["optimizer"])
+        if lr_scheduler is not None:
+            saved_total = train_state.get("schedule_total_steps")
+            if saved_total != total_steps:
+                raise ValueError(
+                    "Exact resume with a scheduled learning rate requires the same "
+                    f"total_steps ({saved_total!r} in checkpoint, {total_steps} requested). "
+                    "Retrain from scratch when extending a cosine-scheduled run."
+                )
+            scheduler_state = train_state.get("lr_scheduler")
+            if scheduler_state is None:
+                raise ValueError(
+                    "Resume checkpoint has no learning-rate scheduler state"
+                )
+            lr_scheduler.load_state_dict(scheduler_state)
         start_step = int(train_state["step"])
         ema.step = int(train_state.get("ema_step", start_step))
         best_val = float(train_state.get("best_val", best_val))
@@ -301,18 +363,29 @@ def train_diffusion_policy(
 
     logger = TrainingLogger(output_dir)
     save_json(
-        {"policy_config": policy_cfg, "dataset_path": str(dataset_path), "split": split.to_dict(),
-         "dataset_hash": reader.dataset_hash, "split_hash": split.hash,
-         "normalization_hash": stats.hash, "device": str(device),
-         "training_seed": seed,
-         "named_generator_seeds": gen_seeds,
-         "steps_per_epoch": steps_per_epoch, "total_steps": total_steps,
-         "early_stopping": "disabled"},
+        {
+            "policy_config": policy_cfg,
+            "dataset_path": str(dataset_path),
+            "split": split.to_dict(),
+            "dataset_hash": reader.dataset_hash,
+            "split_hash": split.hash,
+            "normalization_hash": stats.hash,
+            "device": str(device),
+            "training_seed": seed,
+            "named_generator_seeds": gen_seeds,
+            "steps_per_epoch": steps_per_epoch,
+            "total_steps": total_steps,
+            "early_stopping": "disabled",
+        },
         output_dir / "train_config.json",
     )
 
-    def diffusion_loss(m: torch.nn.Module, batch: dict,
-                       ngen: torch.Generator | None, tgen: torch.Generator | None) -> torch.Tensor:
+    def diffusion_loss(
+        m: torch.nn.Module,
+        batch: dict,
+        ngen: torch.Generator | None,
+        tgen: torch.Generator | None,
+    ) -> torch.Tensor:
         x0 = batch["action_chunk"].to(device)
         cond = batch["obs_history"].to(device).flatten(1)
         noise = torch.empty_like(x0).normal_(generator=ngen)
@@ -329,25 +402,38 @@ def train_diffusion_policy(
         if val_loader is None:
             return None
         ema.shadow.to(device).eval()
-        losses = []
+        weighted_loss = 0.0
+        examples = 0
         vgen = torch_generator(gen_seeds["validation"], device)
         with torch.no_grad():
             for vb in val_loader:
-                losses.append(diffusion_loss(ema.shadow, vb, vgen, vgen).item())
-        return float(np.mean(losses))
+                batch_n = int(vb["action_chunk"].shape[0])
+                weighted_loss += (
+                    diffusion_loss(ema.shadow, vb, vgen, vgen).item() * batch_n
+                )
+                examples += batch_n
+        return weighted_loss / examples
 
     def save(path: Path, *, with_train_state: bool) -> None:
         train_state = None
         if with_train_state:
             train_state = {
-                "step": step, "ema_step": ema.step,
-                "optimizer": optimizer.state_dict(), "best_val": best_val,
+                "step": step,
+                "ema_step": ema.step,
+                "optimizer": optimizer.state_dict(),
+                "best_val": best_val,
+                "lr_scheduler": lr_scheduler.state_dict()
+                if lr_scheduler is not None
+                else None,
+                "schedule_total_steps": total_steps,
                 "rng_state": {
                     "noise": noise_gen.get_state(),
                     "timesteps": timestep_gen.get_state(),
                     "torch": torch.get_rng_state(),
                     "torch_cuda": (
-                        torch.cuda.get_rng_state_all() if device.type == "cuda" else None
+                        torch.cuda.get_rng_state_all()
+                        if device.type == "cuda"
+                        else None
                     ),
                     "loader_epoch": epoch_loader_state,
                     "batches_into_epoch": batches_this_epoch,
@@ -367,8 +453,11 @@ def train_diffusion_policy(
         path = checkpoint_dir / f"step_{step:06d}.pt"
         save(path, with_train_state=False)
         if on_checkpoint is not None:
-            guarded = {"dataloader_order": loader_gen, "diffusion_noise": noise_gen,
-                       "diffusion_timesteps": timestep_gen}
+            guarded = {
+                "dataloader_order": loader_gen,
+                "diffusion_noise": noise_gen,
+                "diffusion_timesteps": timestep_gen,
+            }
             with preserve_rng_states(guarded):
                 on_checkpoint(step=step, checkpoint_path=path)
             model.train()
@@ -425,7 +514,9 @@ def train_diffusion_policy(
             save(last_path, with_train_state=True)
         # Interval snapshots + screening; also fires at the final step even
         # when total_steps is not a multiple of checkpoint_every (§4, §5).
-        if checkpoint_every and (step % int(checkpoint_every) == 0 or step == total_steps):
+        if checkpoint_every and (
+            step % int(checkpoint_every) == 0 or step == total_steps
+        ):
             snapshot_and_screen()
 
     save(last_path, with_train_state=True)

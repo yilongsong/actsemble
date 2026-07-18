@@ -7,7 +7,8 @@ freeze-gated)."
 ## Reference-fidelity review — ADDRESSED 2026-07-18
 A rigorous review of the "canonical" reproductions found real deviations from the
 references (not just labeling). Fixed this pass and retrained under the overnight
-run (`scripts/overnight_canonical.py`). Coverage: `tests/test_fidelity_fixes.py`.
+run (`scripts/overnight_canonical.py`). Coverage is split across
+`tests/policies/`, `tests/data/`, and `tests/training/`.
 
 - **DP/flow window range.** `enumerate_window_indices(alignment="diffusion_policy",
   action_horizon=...)` now replicates the reference Diffusion-Policy
@@ -63,10 +64,8 @@ run (`scripts/overnight_canonical.py`). Coverage: `tests/test_fidelity_fixes.py`
 - Flow matching is a **conditional rectified-flow baseline** over the DP U-Net —
   NOT a reproduction of pi0 (VLM + action expert) or PointFlowMatch (point-cloud
   SO(3) flow). Labeled as such everywhere.
-- `run_protocol.py` still trains via `train_diffusion_policy` for the full
-  freeze/verifier/integration path; the overnight driver is the multi-family
-  screen+select path. Folding ACT/flow into `run_protocol` train-time screening is
-  deferred (the post-hoc driver achieves the same selection under identical rules).
+- `run_protocol.py` now dispatches DP, ACT, and flow through the same out-of-process
+  screening, confirmation, freeze, integration, and final-test path.
 - **ACT posterior collapse** on near-unimodal PushT (KL -> ~0): the CVAE latent
   carries ~no style, so the model is effectively deterministic chunk-BC. Tolerable
   by design (z=0 inference), but PushT does not *exercise* ACT's multimodality —

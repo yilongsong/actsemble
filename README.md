@@ -33,8 +33,8 @@ runtime system logic are assembled around it.
 
 | system | candidates per replan | selection rule | learned component |
 |---|---|---|---|
-| `standalone_diffusion` | 1 | candidate zero | none |
-| `multisample_control` | K (16) | seeded uniform random | none |
+| `standalone_diffusion` | K in paired mode | candidate zero | none |
+| `multisample_control` | K (16) | first candidate | none |
 | `candidate_reranking_actsemble` | K (16) | highest component score | action-chunk compatibility |
 
 The multi-sample control is a **compute-matched sampling control**, not a
@@ -90,9 +90,22 @@ simulator-trained critic — and:
 conda create -n actsemble python=3.11 -y
 conda activate actsemble
 pip install torch --index-url https://download.pytorch.org/whl/cu128   # match your CUDA
-pip install -e ".[dev,sim]"
+pip install -e ".[dev,sim,analysis]" -c requirements/benchmark-cu128.txt
 python -m mani_skill.utils.download_demo "PushT-v1"
 ```
+
+Verify the exact GPU simulator path from the host shell before running a
+benchmark:
+
+```bash
+actsemble-verify-gpu
+python -m pytest -m sim -q
+```
+
+The first command requires CUDA visibility and exercises `physx_cuda`, a live
+PushT reset/step, and the object-nudge state mutation. It fails loudly rather
+than silently selecting a CPU backend. The second command runs the repository's
+marked simulator integration tests; ordinary `pytest` remains CPU-only.
 
 ## Smoke test
 
@@ -191,6 +204,8 @@ offline-only verifier selection, system freezing, integration checks
 policy seeds) aggregated across training seeds. See
 [docs/checkpoint_selection_protocol.md](docs/checkpoint_selection_protocol.md);
 driver: `scripts/run_protocol.py` with `configs/protocol/default.yaml`.
+Schema and compatibility changes are recorded in
+[docs/freeze_v2_migration.md](docs/freeze_v2_migration.md).
 
 ## Evaluation protocol
 
@@ -222,7 +237,7 @@ src/actsemble/
                     perturbations (action noise/latency, obs noise, object nudge)
   training/         policy + component training loops (no simulator imports)
   evaluation/       paired seeds, metrics, evaluator, reports, video
-tests/              81 tests; `pytest` is sim-free, `pytest -m sim` adds env tests
+tests/              fast CPU suite; `pytest -m sim` adds environment tests
 docs/               phase_0_scope, experiment_contract, adding_components
 ```
 

@@ -8,6 +8,7 @@ history), down/up-sampling over the prediction-horizon axis.
 from __future__ import annotations
 
 import math
+from typing import cast
 
 import torch
 import torch.nn as nn
@@ -20,16 +21,20 @@ class SinusoidalPosEmb(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         half = self.dim // 2
-        emb = math.log(10000.0) / (half - 1)
-        emb = torch.exp(torch.arange(half, device=x.device, dtype=torch.float32) * -emb)
-        emb = x.float()[:, None] * emb[None, :]
+        frequency_scale = math.log(10000.0) / (half - 1)
+        frequencies = torch.exp(
+            torch.arange(half, device=x.device, dtype=torch.float32) * -frequency_scale
+        )
+        emb = x.float()[:, None] * frequencies[None, :]
         return torch.cat([emb.sin(), emb.cos()], dim=-1)
 
 
 class Conv1dBlock(nn.Module):
     """Conv1d -> GroupNorm -> Mish."""
 
-    def __init__(self, in_ch: int, out_ch: int, kernel_size: int = 5, n_groups: int = 8):
+    def __init__(
+        self, in_ch: int, out_ch: int, kernel_size: int = 5, n_groups: int = 8
+    ):
         super().__init__()
         self.block = nn.Sequential(
             nn.Conv1d(in_ch, out_ch, kernel_size, padding=kernel_size // 2),
@@ -44,8 +49,15 @@ class Conv1dBlock(nn.Module):
 class ConditionalResBlock1d(nn.Module):
     """Two conv blocks with FiLM (scale, bias) conditioning after the first."""
 
-    def __init__(self, in_ch: int, out_ch: int, cond_dim: int, kernel_size: int = 5,
-                 *, cond_predict_scale: bool = False):
+    def __init__(
+        self,
+        in_ch: int,
+        out_ch: int,
+        cond_dim: int,
+        kernel_size: int = 5,
+        *,
+        cond_predict_scale: bool = False,
+    ):
         super().__init__()
         self.block1 = Conv1dBlock(in_ch, out_ch, kernel_size)
         self.block2 = Conv1dBlock(out_ch, out_ch, kernel_size)
@@ -59,9 +71,11 @@ class ConditionalResBlock1d(nn.Module):
         h = self.block1(x)
         scale, bias = self.cond_encoder(cond).unsqueeze(-1).chunk(2, dim=1)
         if self.cond_predict_scale:
-            h = scale * h + bias          # official Diffusion Policy (cond_predict_scale=True)
+            h = scale * h + bias  # official Diffusion Policy (cond_predict_scale=True)
         else:
-            h = h * (1 + scale) + bias    # stabilized-FiLM variant (lightweight checkpoints)
+            h = (
+                h * (1 + scale) + bias
+            )  # stabilized-FiLM variant (lightweight checkpoints)
         h = self.block2(h)
         return h + self.residual(x)
 
@@ -122,18 +136,32 @@ class ConditionalUnet1d(nn.Module):
             self.downs.append(
                 nn.ModuleList(
                     [
-                        ConditionalResBlock1d(ci, co, cond_dim, kernel_size, cond_predict_scale=cond_predict_scale),
-                        ConditionalResBlock1d(co, co, cond_dim, kernel_size, cond_predict_scale=cond_predict_scale),
+                        ConditionalResBlock1d(
+                            ci,
+                            co,
+                            cond_dim,
+                            kernel_size,
+                            cond_predict_scale=cond_predict_scale,
+                        ),
+                        ConditionalResBlock1d(
+                            co,
+                            co,
+                            cond_dim,
+                            kernel_size,
+                            cond_predict_scale=cond_predict_scale,
+                        ),
                         Downsample1d(co) if not last else nn.Identity(),
                     ]
                 )
             )
 
         mid_ch = channels[-1]
-        self.mid1 = ConditionalResBlock1d(mid_ch, mid_ch, cond_dim, kernel_size,
-                                          cond_predict_scale=cond_predict_scale)
-        self.mid2 = ConditionalResBlock1d(mid_ch, mid_ch, cond_dim, kernel_size,
-                                          cond_predict_scale=cond_predict_scale)
+        self.mid1 = ConditionalResBlock1d(
+            mid_ch, mid_ch, cond_dim, kernel_size, cond_predict_scale=cond_predict_scale
+        )
+        self.mid2 = ConditionalResBlock1d(
+            mid_ch, mid_ch, cond_dim, kernel_size, cond_predict_scale=cond_predict_scale
+        )
 
         # Mirrors Diffusion Policy's ConditionalUnet1D: one up block per
         # down block except the first; every up block upsamples, restoring
@@ -143,8 +171,20 @@ class ConditionalUnet1d(nn.Module):
             self.ups.append(
                 nn.ModuleList(
                     [
-                        ConditionalResBlock1d(co * 2, ci, cond_dim, kernel_size, cond_predict_scale=cond_predict_scale),
-                        ConditionalResBlock1d(ci, ci, cond_dim, kernel_size, cond_predict_scale=cond_predict_scale),
+                        ConditionalResBlock1d(
+                            co * 2,
+                            ci,
+                            cond_dim,
+                            kernel_size,
+                            cond_predict_scale=cond_predict_scale,
+                        ),
+                        ConditionalResBlock1d(
+                            ci,
+                            ci,
+                            cond_dim,
+                            kernel_size,
+                            cond_predict_scale=cond_predict_scale,
+                        ),
                         Upsample1d(ci),
                     ]
                 )
@@ -172,14 +212,16 @@ class ConditionalUnet1d(nn.Module):
 
         h = x.movedim(-1, -2)  # [B, A, H_p]
         skips = []
-        for res1, res2, down in self.downs:
+        for raw_block in self.downs:
+            res1, res2, down = cast(nn.ModuleList, raw_block)
             h = res1(h, cond)
             h = res2(h, cond)
             skips.append(h)
             h = down(h)
         h = self.mid1(h, cond)
         h = self.mid2(h, cond)
-        for res1, res2, up in self.ups:
+        for raw_block in self.ups:
+            res1, res2, up = cast(nn.ModuleList, raw_block)
             h = torch.cat([h, skips.pop()], dim=1)
             h = res1(h, cond)
             h = res2(h, cond)

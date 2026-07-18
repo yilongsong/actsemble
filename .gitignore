@@ -1,5 +1,5 @@
 # Data and outputs (frozen datasets are large binaries; regenerate via scripts/prepare_dataset.py)
-data/
+/data/
 outputs/
 runs/
 *.h5

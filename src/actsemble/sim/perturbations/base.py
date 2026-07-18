@@ -38,7 +38,9 @@ class NoOpPerturbation:
     def reset(self, *, episode_seed: int) -> None:
         pass
 
-    def modify_observation(self, observation: StateObservation, step_index: int) -> StateObservation:
+    def modify_observation(
+        self, observation: StateObservation, step_index: int
+    ) -> StateObservation:
         return observation
 
     def modify_action(self, action: RobotAction, step_index: int) -> RobotAction:

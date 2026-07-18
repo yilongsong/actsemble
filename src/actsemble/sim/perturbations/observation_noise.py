@@ -16,21 +16,27 @@ from .base import NoOpPerturbation
 class ObservationNoisePerturbation(NoOpPerturbation):
     name = "observation_noise"
 
-    def __init__(self, *, sigma: float = 0.005, dims: list[int] | None = None, seed: int = 0):
+    def __init__(
+        self, *, sigma: float = 0.005, dims: list[int] | None = None, seed: int = 0
+    ):
         self.sigma = float(sigma)
         self.dims = dims  # None = all state dimensions
         self.seed = int(seed)
         self._rng = np.random.default_rng(0)
 
     def reset(self, *, episode_seed: int) -> None:
-        self._rng = np.random.default_rng(derive_seed(self.seed, self.name, episode_seed))
+        self._rng = np.random.default_rng(
+            derive_seed(self.seed, self.name, episode_seed)
+        )
 
-    def modify_observation(self, observation: StateObservation, step_index: int) -> StateObservation:
+    def modify_observation(
+        self, observation: StateObservation, step_index: int
+    ) -> StateObservation:
         state = observation.state.copy()
         idx = np.arange(state.shape[0]) if self.dims is None else np.asarray(self.dims)
-        state[idx] = state[idx] + self._rng.normal(0.0, self.sigma, size=idx.shape[0]).astype(
-            np.float32
-        )
+        state[idx] = state[idx] + self._rng.normal(  # type: ignore[attr-defined]
+            0.0, self.sigma, size=idx.shape[0]
+        ).astype(np.float32)
         return StateObservation(
             state=state,
             previous_action=observation.previous_action,

@@ -179,11 +179,16 @@ def convert_demonstrations(
             success_at_end = bool(final_info["success"].item())
             if require_success_at_end and not success_at_end:
                 rejected.append(
-                    {"source_episode_id": demo.source_episode_id, "reason": "not successful at final state"}
+                    {
+                        "source_episode_id": demo.source_episode_id,
+                        "reason": "not successful at final state",
+                    }
                 )
                 continue
             actions = np.clip(demo.actions, low, high).astype(np.float32)
-            previous = np.concatenate([np.zeros((1, actions.shape[1]), np.float32), actions[:-1]])
+            previous = np.concatenate(
+                [np.zeros((1, actions.shape[1]), np.float32), actions[:-1]]
+            )
             episode_id = f"ep_{len(episodes):05d}"
             episodes.append(
                 EpisodeRecord(
@@ -206,7 +211,9 @@ def convert_demonstrations(
                 }
             )
         except Exception as exc:
-            failures.append({"source_episode_id": demo.source_episode_id, "error": repr(exc)})
+            failures.append(
+                {"source_episode_id": demo.source_episode_id, "error": repr(exc)}
+            )
 
     provenance = {
         "success_only": True,

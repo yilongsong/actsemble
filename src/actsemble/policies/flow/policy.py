@@ -65,7 +65,11 @@ class FlowMatchingPolicy:
 
     @torch.no_grad()
     def sample_action_chunks(
-        self, observation_history: np.ndarray, *, num_samples: int, generator: torch.Generator
+        self,
+        observation_history: np.ndarray,
+        *,
+        num_samples: int,
+        generator: torch.Generator,
     ) -> torch.Tensor:
         """[obs_horizon, obs_feature_dim] raw obs -> [K, H_p, A] raw actions."""
         expected_feat = self.meta.state_dim + (
@@ -110,26 +114,47 @@ class FlowMatchingPolicy:
     # -- persistence ---------------------------------------------------------
     @staticmethod
     def save_checkpoint(
-        path: str | Path, *, config: dict, meta: PolicyMeta,
-        model_state: dict, ema_state: dict | None, train_state: dict | None = None,
+        path: str | Path,
+        *,
+        config: dict,
+        meta: PolicyMeta,
+        model_state: dict,
+        ema_state: dict | None,
+        train_state: dict | None = None,
     ) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(
-            {"kind": "actsemble_flow_policy", "config": config, "meta": meta.to_dict(),
-             "model_state": model_state, "ema_state": ema_state, "train_state": train_state},
+            {
+                "kind": "actsemble_flow_policy",
+                "config": config,
+                "meta": meta.to_dict(),
+                "model_state": model_state,
+                "ema_state": ema_state,
+                "train_state": train_state,
+            },
             path,
         )
 
     @classmethod
     def from_checkpoint(
-        cls, path: str | Path, *, device: torch.device | str = "cpu", use_ema: bool = True
+        cls,
+        path: str | Path,
+        *,
+        device: torch.device | str = "cpu",
+        use_ema: bool = True,
+        sampler_overrides: dict | None = None,
+        _checkpoint_payload: dict | None = None,
     ) -> "FlowMatchingPolicy":
         path = Path(path)
-        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        ckpt = _checkpoint_payload
+        if ckpt is None:
+            ckpt = torch.load(path, map_location="cpu", weights_only=False)
         if ckpt.get("kind") != "actsemble_flow_policy":
             raise ValueError(f"{path} is not an Actsemble flow-policy checkpoint")
         config = ckpt["config"]
+        if sampler_overrides:  # e.g. {"inference_steps": 20} for an Euler step-count sweep
+            config = {**config, "flow": {**config.get("flow", {}), **sampler_overrides}}
         meta = PolicyMeta.from_dict(ckpt["meta"])
         model = build_model(config, meta)
         if use_ema and ckpt.get("ema_state") is not None:
@@ -140,6 +165,12 @@ class FlowMatchingPolicy:
             weights_kind = "raw"
         normalizer = Normalizer(NormalizationStats.from_dict(meta.normalization))
         return cls(
-            model, normalizer, meta, config=config, device=torch.device(device),
-            checkpoint_hash=hash_file(path), checkpoint_path=str(path), weights_kind=weights_kind,
+            model,
+            normalizer,
+            meta,
+            config=config,
+            device=torch.device(device),
+            checkpoint_hash=hash_file(path),
+            checkpoint_path=str(path),
+            weights_kind=weights_kind,
         )

@@ -40,7 +40,7 @@ are specified in [checkpoint_selection_protocol.md](checkpoint_selection_protoco
 * Forbidden: simulator interaction, gym environments, rollouts (online or
   offline), reward, success labels, privileged evaluation outcomes, failed
   trajectories, additional expert demonstrations, external datasets.
-* Enforced: `tests/test_training_has_no_sim_dependency.py` runs both
+* Enforced: `tests/training/test_training_has_no_sim_dependency.py` runs both
   trainers in a subprocess where importing `mani_skill`, `gymnasium`, or
   `sapien` raises, and asserts the training import graph never touches
   `actsemble.sim`.
@@ -68,7 +68,7 @@ are specified in [checkpoint_selection_protocol.md](checkpoint_selection_protoco
   depends only on (candidate_seed, e, r). With equal K, the multi-sample
   control and the Actsemble reranker receive bitwise-identical candidates;
   only the selection rule differs
-  (`tests/test_system_candidate_identity.py`).
+  (`tests/systems/test_system_candidate_identity.py`).
 * Primary metric `success_once`, with `success_at_end`, timeouts,
   exceptions, fallbacks, clip rates, and latency always reported.
   Comparisons under 50 paired episodes are flagged as not statistically

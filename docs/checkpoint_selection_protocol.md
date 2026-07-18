@@ -58,7 +58,7 @@ runs through an `on_checkpoint` callback that the orchestrator injects
 into the trainer; the trainer wraps every callback invocation in
 `preserve_rng_states`, which snapshots and exactly restores Python, NumPy,
 torch CPU, all torch CUDA states, and the named training generators.
-`tests/test_rng_preservation.py` verifies end-to-end that training with
+`tests/protocol/test_rng_preservation.py` verifies end-to-end that training with
 screening at any frequency — or disabled — produces bitwise-identical
 final weights and loss trajectories.
 
@@ -119,7 +119,9 @@ hash, both normalization hashes, dataset/subset/split hashes, selection
 and fallback rules, env facts, and the integration/final panels. The
 same-data contract and panel disjointness are re-verified at freeze time.
 Integration and final-test refuse to run without it, and every final
-result is verified field-by-field against it.
+result is verified field-by-field against it. Freeze v2 and the associated
+result-schema compatibility rules are catalogued in
+[freeze_v2_migration.md](freeze_v2_migration.md).
 
 ## Candidate-set identity (§11) — `systems/interface.py`
 
@@ -131,7 +133,8 @@ same K-tensor and differ only in selection:
 
     standalone  → candidate zero
     control     → candidate zero (first_candidate; execution-identity control)
-    actsemble   → highest verifier score (fallback: candidate zero)
+    actsemble   → highest verifier score (fallback: candidate zero if finite,
+                  otherwise the first finite candidate; no finite candidate raises)
 
 Two implementation decisions, made deliberate and explicit:
 

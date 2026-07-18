@@ -182,14 +182,20 @@ class DiffusionPolicy:
         device: torch.device | str = "cpu",
         use_ema: bool = True,
         sampler_overrides: dict | None = None,
+        _checkpoint_payload: dict | None = None,
     ) -> "DiffusionPolicy":
         path = Path(path)
-        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        ckpt = _checkpoint_payload
+        if ckpt is None:
+            ckpt = torch.load(path, map_location="cpu", weights_only=False)
         if ckpt.get("kind") != "actsemble_diffusion_policy":
             raise ValueError(f"{path} is not an Actsemble diffusion-policy checkpoint")
         config = ckpt["config"]
         if sampler_overrides:
-            config = {**config, "diffusion": {**config.get("diffusion", {}), **sampler_overrides}}
+            config = {
+                **config,
+                "diffusion": {**config.get("diffusion", {}), **sampler_overrides},
+            }
         meta = PolicyMeta.from_dict(ckpt["meta"])
         model = build_model(config, meta)
         if use_ema:

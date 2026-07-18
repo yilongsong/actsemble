@@ -31,6 +31,7 @@ Usage:
         --source data/push_t_pilot.h5 --output data/push_t_active.h5 \
         --settle-steps 5
 """
+
 from __future__ import annotations
 
 import argparse
@@ -60,7 +61,9 @@ def default_bundle_path(task_id, control_mode, backend) -> Path:
     return matches[0]
 
 
-def per_step_coverage(source, env, n_episodes) -> tuple[list[np.ndarray], list[np.ndarray]]:
+def per_step_coverage(
+    source, env, n_episodes
+) -> tuple[list[np.ndarray], list[np.ndarray]]:
     """Re-project each source episode and record per-STATE goal-area coverage.
 
     Coverage is the continuous ``pseudo_render_intersection`` value the task
@@ -121,7 +124,9 @@ def trim_episode(ep, cov, reach_thresh, hold_floor, settle, min_keep):
         "removed": T - keep_actions,
         "first_success_state": reached,
         "last_below_floor_state": last_active,
-        "min_coverage_after_reach": float(cov[reached:].min()) if reached >= 0 else -1.0,
+        "min_coverage_after_reach": float(cov[reached:].min())
+        if reached >= 0
+        else -1.0,
         "recovery": recovery,
         "below_train_window_18": bool(keep_actions < 18),
     }
@@ -132,14 +137,27 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--source", default="data/push_t_pilot.h5")
     ap.add_argument("--output", default="data/push_t_active.h5")
-    ap.add_argument("--settle-steps", type=int, default=5,
-                    help="states kept after the block last left the goal (arrive-and-stop margin)")
-    ap.add_argument("--reach-thresh", type=float, default=0.90,
-                    help="goal-area coverage counted as success (task default 0.90)")
-    ap.add_argument("--hold-floor", type=float, default=0.70,
-                    help="coverage below this = block meaningfully off-goal (kept, not hold)")
-    ap.add_argument("--min-keep", type=int, default=8,
-                    help="floor on kept actions per episode")
+    ap.add_argument(
+        "--settle-steps",
+        type=int,
+        default=5,
+        help="states kept after the block last left the goal (arrive-and-stop margin)",
+    )
+    ap.add_argument(
+        "--reach-thresh",
+        type=float,
+        default=0.90,
+        help="goal-area coverage counted as success (task default 0.90)",
+    )
+    ap.add_argument(
+        "--hold-floor",
+        type=float,
+        default=0.70,
+        help="coverage below this = block meaningfully off-goal (kept, not hold)",
+    )
+    ap.add_argument(
+        "--min-keep", type=int, default=8, help="floor on kept actions per episode"
+    )
     ap.add_argument("--stats-out", default="outputs/data_analysis/active_stats.json")
     args = ap.parse_args()
 
@@ -147,14 +165,21 @@ def main() -> int:
     meta = src_reader.metadata
     episodes = list(src_reader.episodes)  # ep_00000.. in id order
     n = len(episodes)
-    print(f"[active] source: {args.source}  ({n} episodes, "
-          f"{src_reader.num_transitions} transitions, hash {meta.dataset_hash[:12]})")
+    print(
+        f"[active] source: {args.source}  ({n} episodes, "
+        f"{src_reader.num_transitions} transitions, hash {meta.dataset_hash[:12]})"
+    )
 
     task_id, ctrl, backend = meta.task_id, meta.controller, meta.simulation_backend
     bundle = default_bundle_path(task_id, ctrl, backend)
     src = ManiSkillTrajectorySource(bundle)  # ALL episodes, same order as prep
-    env = make_env(task_id=task_id, control_mode=ctrl, sim_backend=backend,
-                   obs_mode="state", render_mode=None)
+    env = make_env(
+        task_id=task_id,
+        control_mode=ctrl,
+        sim_backend=backend,
+        obs_mode="state",
+        render_mode=None,
+    )
 
     print("[active] recomputing per-step goal coverage via state projection...")
     coverages, obj_poses = per_step_coverage(src, env, n)
@@ -168,16 +193,26 @@ def main() -> int:
     for ep, objp in zip(episodes, obj_poses):
         frozen = np.concatenate([ep.state[:, 24:31], ep.next_state[-1:, 24:31]], axis=0)
         max_mismatch = max(max_mismatch, float(np.abs(objp - frozen).max()))
-    print(f"[active] frozen<->reprojected obj_pose max|Δ| = {max_mismatch:.2e} (0 => exact alignment)")
+    print(
+        f"[active] frozen<->reprojected obj_pose max|Δ| = {max_mismatch:.2e} (0 => exact alignment)"
+    )
     if max_mismatch > 1e-4:
-        raise SystemExit(f"alignment check failed ({max_mismatch:.2e}); refusing to trim")
+        raise SystemExit(
+            f"alignment check failed ({max_mismatch:.2e}); refusing to trim"
+        )
     if not all(c[-1] >= args.reach_thresh for c in coverages):
         raise SystemExit("some episodes are not successful at their final state")
 
     trimmed, infos = [], []
     for ep, cov in zip(episodes, coverages):
-        te, info = trim_episode(ep, cov, args.reach_thresh, args.hold_floor,
-                                args.settle_steps, args.min_keep)
+        te, info = trim_episode(
+            ep,
+            cov,
+            args.reach_thresh,
+            args.hold_floor,
+            args.settle_steps,
+            args.min_keep,
+        )
         trimmed.append(te)
         infos.append(info)
 
@@ -185,56 +220,78 @@ def main() -> int:
     n_after = int(sum(i["kept_length"] for i in infos))
     n_recovery = int(sum(i["recovery"] for i in infos))
     n_short = int(sum(i["below_train_window_18"] for i in infos))
-    print(f"[active] transitions {n_before} -> {n_after} "
-          f"(removed {n_before - n_after} = {100*(n_before-n_after)/n_before:.1f}%)")
-    print(f"[active] recovery episodes preserved: {n_recovery}; kept<18 steps: {n_short}")
+    print(
+        f"[active] transitions {n_before} -> {n_after} "
+        f"(removed {n_before - n_after} = {100 * (n_before - n_after) / n_before:.1f}%)"
+    )
+    print(
+        f"[active] recovery episodes preserved: {n_recovery}; kept<18 steps: {n_short}"
+    )
 
     # ---- metadata for the derived dataset ----
     new_meta = DatasetMetadata(
-        simulator=meta.simulator, simulator_version=meta.simulator_version,
-        task_id=meta.task_id, robot=meta.robot, observation_mode=meta.observation_mode,
-        state_dimension=meta.state_dimension, state_layout=meta.state_layout,
-        controller=meta.controller, action_dimension=meta.action_dimension,
-        action_definition=meta.action_definition, control_frequency=meta.control_frequency,
+        simulator=meta.simulator,
+        simulator_version=meta.simulator_version,
+        task_id=meta.task_id,
+        robot=meta.robot,
+        observation_mode=meta.observation_mode,
+        state_dimension=meta.state_dimension,
+        state_layout=meta.state_layout,
+        controller=meta.controller,
+        action_dimension=meta.action_dimension,
+        action_definition=meta.action_definition,
+        control_frequency=meta.control_frequency,
         simulation_backend=meta.simulation_backend,
         source_dataset=f"derived_from:{args.source} (trailing-hold-trim)",
         generation_or_replay_seed=meta.generation_or_replay_seed,
     )
     new_meta.extra = dict(meta.extra)
-    new_meta.extra.update({
-        "derived_from_dataset": str(args.source),
-        "derived_from_hash": meta.dataset_hash,
-        "derived_from_sha256": hash_file(args.source),
-        "filtering_method": "trailing_hold_trim_coverage_hysteresis",
-        "success_criterion": "PushT-v1 pseudo-render goal-area coverage >= 0.90",
-        "trim_rule": "keep actions 0..clip(max(first_reach, last_below_floor+1)+settle, min_keep, T)",
-        "reach_thresh": float(args.reach_thresh),
-        "hold_floor": float(args.hold_floor),
-        "settle_steps": int(args.settle_steps),
-        "min_keep": int(args.min_keep),
-        "transitions_before": n_before,
-        "transitions_after": n_after,
-        "recovery_episodes_preserved": n_recovery,
-    })
+    new_meta.extra.update(
+        {
+            "derived_from_dataset": str(args.source),
+            "derived_from_hash": meta.dataset_hash,
+            "derived_from_sha256": hash_file(args.source),
+            "filtering_method": "trailing_hold_trim_coverage_hysteresis",
+            "success_criterion": "PushT-v1 pseudo-render goal-area coverage >= 0.90",
+            "trim_rule": "keep actions 0..clip(max(first_reach, last_below_floor+1)+settle, min_keep, T)",
+            "reach_thresh": float(args.reach_thresh),
+            "hold_floor": float(args.hold_floor),
+            "settle_steps": int(args.settle_steps),
+            "min_keep": int(args.min_keep),
+            "transitions_before": n_before,
+            "transitions_after": n_after,
+            "recovery_episodes_preserved": n_recovery,
+        }
+    )
 
     provenance = {
         "success_only": True,
         "conversion_method": "trailing_success_hold_trim (derived)",
-        "source": {"derived_from": str(args.source),
-                   "derived_from_hash": meta.dataset_hash,
-                   "bundle": str(bundle)},
+        "source": {
+            "derived_from": str(args.source),
+            "derived_from_hash": meta.dataset_hash,
+            "bundle": str(bundle),
+        },
         "success_criterion": new_meta.extra["success_criterion"],
         "trim_rule": new_meta.extra["trim_rule"],
-        "reach_thresh": args.reach_thresh, "hold_floor": args.hold_floor,
-        "settle_steps": args.settle_steps, "min_keep": args.min_keep,
+        "reach_thresh": args.reach_thresh,
+        "hold_floor": args.hold_floor,
+        "settle_steps": args.settle_steps,
+        "min_keep": args.min_keep,
         "obj_pose_alignment_max_abs": max_mismatch,
         "exported_episodes": [
-            {"episode_id": i["episode_id"], "length": i["kept_length"],
-             "source_success": True, "projected_success_at_end": True}
+            {
+                "episode_id": i["episode_id"],
+                "length": i["kept_length"],
+                "source_success": True,
+                "projected_success_at_end": True,
+            }
             for i in infos
         ],
-        "rejected_episodes": [], "rejected_count": 0,
-        "conversion_failures": [], "conversion_failure_count": 0,
+        "rejected_episodes": [],
+        "rejected_count": 0,
+        "conversion_failures": [],
+        "conversion_failure_count": 0,
         "per_episode_trim": infos,
     }
 
@@ -246,21 +303,32 @@ def main() -> int:
     reader = DatasetReader(args.output)
     summary = validate_dataset(reader)
     validate_success_only_provenance(args.output)
-    print(f"[active] validation OK: {summary['num_episodes']} eps, "
-          f"{summary['num_transitions']} transitions, "
-          f"len[min={summary['episode_length_min']}, mean={summary['episode_length_mean']:.1f}, "
-          f"max={summary['episode_length_max']}]")
+    print(
+        f"[active] validation OK: {summary['num_episodes']} eps, "
+        f"{summary['num_transitions']} transitions, "
+        f"len[min={summary['episode_length_min']}, mean={summary['episode_length_mean']:.1f}, "
+        f"max={summary['episode_length_max']}]"
+    )
 
     # ---- stats for visualization ----
     Path(args.stats_out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.stats_out).write_text(json.dumps({
-        "source": args.source, "output": args.output,
-        "settle_steps": args.settle_steps, "min_keep": args.min_keep,
-        "transitions_before": n_before, "transitions_after": n_after,
-        "removed_fraction": (n_before - n_after) / n_before,
-        "recovery_episodes": n_recovery, "kept_below_18": n_short,
-        "per_episode": infos,
-    }, indent=2))
+    Path(args.stats_out).write_text(
+        json.dumps(
+            {
+                "source": args.source,
+                "output": args.output,
+                "settle_steps": args.settle_steps,
+                "min_keep": args.min_keep,
+                "transitions_before": n_before,
+                "transitions_after": n_after,
+                "removed_fraction": (n_before - n_after) / n_before,
+                "recovery_episodes": n_recovery,
+                "kept_below_18": n_short,
+                "per_episode": infos,
+            },
+            indent=2,
+        )
+    )
     print(f"[active] stats -> {args.stats_out}")
     return 0
 

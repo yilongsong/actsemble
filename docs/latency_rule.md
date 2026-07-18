@@ -21,6 +21,9 @@ buffer must hold at least `⌈τ·f_c⌉` (fast policy → 1; slow policy → mo
 ## Measurement discipline
 - Measure `τ` as a **high percentile (p95/p99)**, not the mean — a single slow
   inference stalls the robot.
+- Warm up the policy/component once before measurement and synchronize CUDA at
+  both timing boundaries. Actsemble evaluation does both and stores synchronized
+  mean, p95, and p99 policy/component/decision latencies in every result.
 - Measure on a **named target platform** (state the GPU / edge device); `τ` is
   hardware-specific.
 - Optional safety margin `α < 1`: `H_a ≥ ⌈τ·f_c / α⌉` for jitter headroom.
@@ -42,7 +45,7 @@ Higher-dim policies (image / VLA) and higher real control rates (50–100 Hz) pu
 `τ·f_c` up → larger `H_a_min` → the latency wall bites, and fast policies (ACT,
 distilled / consistency-model diffusion) win.
 
-## Benchmark mode (implementation pending)
+## Planned latency-constrained benchmark mode
 The latency-constrained benchmark evaluates each policy at its `H_a_min` and reports
 "best closed-loop success achievable under the no-pause contract" — making inference
 speed a first-class performance lever (Actsemble's inference-time-compute thesis). A

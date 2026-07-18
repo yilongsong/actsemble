@@ -54,8 +54,18 @@ class Panel:
     env_seed: int  # root of this panel's seed bank
     num_episodes: int
 
+    def __post_init__(self) -> None:
+        if self.num_episodes < 1:
+            raise ValueError(
+                f"Panel num_episodes must be >= 1, got {self.num_episodes}"
+            )
+
     def to_dict(self) -> dict:
-        return {"name": self.name, "env_seed": self.env_seed, "num_episodes": self.num_episodes}
+        return {
+            "name": self.name,
+            "env_seed": self.env_seed,
+            "num_episodes": self.num_episodes,
+        }
 
 
 @dataclass(frozen=True)
@@ -68,7 +78,11 @@ class PanelEpisode:
 
 def make_panel(name: str, spec: dict | None = None) -> Panel:
     spec = spec if spec is not None else ALL_PANELS[name]
-    return Panel(name=name, env_seed=int(spec["env_seed"]), num_episodes=int(spec["num_episodes"]))
+    return Panel(
+        name=name,
+        env_seed=int(spec["env_seed"]),
+        num_episodes=int(spec["num_episodes"]),
+    )
 
 
 def load_panels(spec: dict | None = None) -> dict[str, Panel]:
@@ -97,7 +111,9 @@ def assert_panels_disjoint(
 ) -> None:
     """Fail loudly if any two panels (or a panel and e.g. the demonstration
     seeds) share an environment-initialization seed."""
-    banks = {name: {e.env_seed for e in panel_episodes(p)} for name, p in panels.items()}
+    banks = {
+        name: {e.env_seed for e in panel_episodes(p)} for name, p in panels.items()
+    }
     for name, seeds in (extra_seed_sets or {}).items():
         banks[name] = set(int(s) for s in seeds)
     names = sorted(banks)
@@ -106,7 +122,11 @@ def assert_panels_disjoint(
         for b in names[i + 1 :]:
             overlap = banks[a] & banks[b]
             if overlap:
-                problems.append(f"{a} and {b} share {len(overlap)} env seed(s): "
-                                f"{sorted(overlap)[:5]}")
+                problems.append(
+                    f"{a} and {b} share {len(overlap)} env seed(s): "
+                    f"{sorted(overlap)[:5]}"
+                )
     if problems:
-        raise ValueError("Evaluation panels are not disjoint:\n  - " + "\n  - ".join(problems))
+        raise ValueError(
+            "Evaluation panels are not disjoint:\n  - " + "\n  - ".join(problems)
+        )

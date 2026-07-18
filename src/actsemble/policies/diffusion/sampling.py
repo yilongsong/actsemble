@@ -53,7 +53,9 @@ def sample_chunks(
     timesteps = scheduler.inference_timesteps(num_inference_steps).tolist()
     for i, tau in enumerate(timesteps):
         tau_prev = timesteps[i + 1] if i + 1 < len(timesteps) else -1
-        eps = model(x, torch.full((num_samples,), tau, device=device, dtype=torch.long), cond)
+        eps = model(
+            x, torch.full((num_samples,), tau, device=device, dtype=torch.long), cond
+        )
         if sampler == "ddim":
             x = scheduler.ddim_step(x, eps, tau, tau_prev)
         elif sampler == "ddpm":

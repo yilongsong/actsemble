@@ -6,7 +6,7 @@ runs the wrapped block, and restores everything exactly. Wrapping
 mid-training evaluation in this guard guarantees that enabling, disabling,
 or re-scheduling screening cannot change later training batches, diffusion
 noise, timesteps, updates, or the final checkpoint sequence
-(tests/test_rng_preservation.py verifies this end-to-end).
+(tests/protocol/test_rng_preservation.py verifies this end-to-end).
 """
 
 from __future__ import annotations
@@ -27,7 +27,9 @@ def preserve_rng_states(named_generators: dict[str, torch.Generator] | None = No
     torch_cuda_states = (
         torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
     )
-    generator_states = {name: g.get_state().clone() for name, g in named_generators.items()}
+    generator_states = {
+        name: g.get_state().clone() for name, g in named_generators.items()
+    }
     try:
         yield
     finally:

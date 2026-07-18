@@ -37,36 +37,65 @@ from actsemble.utils.serialization import save_json  # noqa: E402
 from compare_temporal import mcnemar  # noqa: E402
 
 SYSTEMS = {
-    "act_openloop": {"policy": {"num_candidates": 1}, "components": [],
-                     "selection": {"type": "candidate_zero"},
-                     "execution": {"action_horizon": 16}},
-    "act_latest": {"policy": {"num_candidates": 1}, "components": [],
-                   "selection": {"type": "temporal_ensemble", "aggregation": "latest"},
-                   "execution": {"replan_interval": 1}},
-    "act_te": {"policy": {"num_candidates": 1}, "components": [],
-               "selection": {"type": "temporal_ensemble", "aggregation": "mean",
-                             "recency": "oldest", "decay": 0.01},
-               "execution": {"replan_interval": 1}},
+    "act_openloop": {
+        "policy": {"num_candidates": 1},
+        "components": [],
+        "selection": {"type": "candidate_zero"},
+        "execution": {"action_horizon": 16},
+    },
+    "act_latest": {
+        "policy": {"num_candidates": 1},
+        "components": [],
+        "selection": {"type": "temporal_ensemble", "aggregation": "latest"},
+        "execution": {"replan_interval": 1},
+    },
+    "act_te": {
+        "policy": {"num_candidates": 1},
+        "components": [],
+        "selection": {
+            "type": "temporal_ensemble",
+            "aggregation": "mean",
+            "recency": "oldest",
+            "decay": 0.01,
+        },
+        "execution": {"replan_interval": 1},
+    },
 }
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--policy-checkpoint",
-                    default=str(REPO / "outputs/active_min/act_masked_seed_0/best_ema.pt"))
+    ap.add_argument(
+        "--policy-checkpoint",
+        default=str(REPO / "outputs/active_min/act_masked_seed_0/best_ema.pt"),
+    )
     ap.add_argument("--count", type=int, default=300)
-    ap.add_argument("--out-dir", default=str(REPO / "outputs/active_min/act_replication"))
+    ap.add_argument(
+        "--out-dir", default=str(REPO / "outputs/active_min/act_replication")
+    )
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
 
     panel = make_panel("diagnostic")
-    eval_cfg = {"name": "diagnostic", "regime": "nominal", "max_steps": 100,
-                "panel": {"name": panel.name, "env_seed": panel.env_seed, "num_episodes": args.count},
-                "perturbations": []}
+    eval_cfg = {
+        "name": "diagnostic",
+        "regime": "nominal",
+        "max_steps": 100,
+        "panel": {
+            "name": panel.name,
+            "env_seed": panel.env_seed,
+            "num_episodes": args.count,
+        },
+        "perturbations": [],
+    }
     policy = load_policy(args.policy_checkpoint, device=args.device, use_ema=True)
-    env = make_env(task_id=policy.meta.task_id, control_mode=policy.meta.controller,
-                   sim_backend=policy.meta.simulation_backend, obs_mode="state",
-                   render_mode="rgb_array")
+    env = make_env(
+        task_id=policy.meta.task_id,
+        control_mode=policy.meta.controller,
+        sim_backend=policy.meta.simulation_backend,
+        obs_mode="state",
+        render_mode="rgb_array",
+    )
     del policy
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -74,9 +103,15 @@ def main() -> int:
     for label, cfg in SYSTEMS.items():
         print(f"[replicate-act] {label} ({args.count} ep) ...", flush=True)
         res[label] = evaluate_system(
-            system_cfg={"name": label, **cfg}, eval_cfg=eval_cfg,
-            policy_checkpoint=args.policy_checkpoint, num_episodes=args.count,
-            output_path=out / f"eval_{label}.json", device=args.device, env=env, force=True)
+            system_cfg={"name": label, **cfg},
+            eval_cfg=eval_cfg,
+            policy_checkpoint=args.policy_checkpoint,
+            num_episodes=args.count,
+            output_path=out / f"eval_{label}.json",
+            device=args.device,
+            env=env,
+            force=True,
+        )
     env.close()
 
     n = args.count
@@ -90,20 +125,40 @@ def main() -> int:
         mc = mcnemar(res[a]["successes"], res[b]["successes"])
         d = res[a]["success_rate"] - res[b]["success_rate"]
         sig = "*" if mc["p_exact"] < 0.05 else ""
-        return (f"{a} vs {b}:  {d:+.1%}{sig}   win/loss {mc['a_wins']}/{mc['b_wins']}   "
-                f"McNemar p={mc['p_exact']:.3f}")
+        return (
+            f"{a} vs {b}:  {d:+.1%}{sig}   win/loss {mc['a_wins']}/{mc['b_wins']}   "
+            f"McNemar p={mc['p_exact']:.3f}"
+        )
 
-    L = ["=" * 68, f"ACT temporal-ensembling replication — diagnostic panel, n={n}", "=" * 68]
+    L = [
+        "=" * 68,
+        f"ACT temporal-ensembling replication — diagnostic panel, n={n}",
+        "=" * 68,
+    ]
     L += [row(k) for k in SYSTEMS]
-    L += ["", "ACT'S PAPER CLAIM  (temporal ensembling > full open-loop chunk):",
-          "  " + pair("act_te", "act_openloop"),
-          "", "OUR DECOMPOSITION (dense replanning WITHOUT averaging):",
-          "  " + pair("act_latest", "act_te"),
-          "  " + pair("act_latest", "act_openloop")]
+    L += [
+        "",
+        "ACT'S PAPER CLAIM  (temporal ensembling > full open-loop chunk):",
+        "  " + pair("act_te", "act_openloop"),
+        "",
+        "OUR DECOMPOSITION (dense replanning WITHOUT averaging):",
+        "  " + pair("act_latest", "act_te"),
+        "  " + pair("act_latest", "act_openloop"),
+    ]
     print("\n".join(L))
-    save_json({"n": n, "systems": {k: {"success_rate": res[k]["success_rate"],
-                                       "success_count": res[k]["success_count"]} for k in SYSTEMS}},
-              out / "replication.json")
+    save_json(
+        {
+            "n": n,
+            "systems": {
+                k: {
+                    "success_rate": res[k]["success_rate"],
+                    "success_count": res[k]["success_count"],
+                }
+                for k in SYSTEMS
+            },
+        },
+        out / "replication.json",
+    )
     print(f"\n[replicate-act] wrote {out / 'replication.json'}")
     return 0
 

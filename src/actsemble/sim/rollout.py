@@ -82,7 +82,9 @@ def run_episode(
             for p in perturbations:
                 action = p.modify_action(action, step)
             env_action = act_adapter.adapt(action)
-            action_hasher.update(np.ascontiguousarray(env_action, dtype=np.float32).tobytes())
+            action_hasher.update(
+                np.ascontiguousarray(env_action, dtype=np.float32).tobytes()
+            )
 
             for p in perturbations:
                 p.before_step(env, step)
@@ -107,9 +109,13 @@ def run_episode(
         **system.diagnostics(),
         "action_clip_rate": act_adapter.clip_rate,
         "actions_clipped": act_adapter.clipped_actions,
-        "mean_decision_latency_s": float(np.mean(step_latencies)) if step_latencies else 0.0,
+        "actions_total": act_adapter.total_actions,
+        "mean_decision_latency_s": float(np.mean(step_latencies))
+        if step_latencies
+        else 0.0,
+        "decision_latencies_s": step_latencies,
         "perturbations": [p.name for p in perturbations],
-        "action_digest": action_hasher.hexdigest()[:16],
+        "action_digest": action_hasher.hexdigest(),
     }
     result = RolloutResult(
         episode_seed=episode_seed,

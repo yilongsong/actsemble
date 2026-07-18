@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 from ..config import load_config, merge_config
-from ..utils.repo import current_git_commit
+from ..utils.repo import current_git_commit, git_provenance
 from ..utils.serialization import save_json
 
 SPEC_FILENAME = "spec.yaml"
@@ -51,7 +51,11 @@ def init_experiment(spec_path: str | Path, experiment_dir: str | Path) -> dict:
     with open(frozen_path, "w") as f:
         yaml.safe_dump(spec, f, sort_keys=False)
     save_json(
-        {"git_commit": current_git_commit(), "spec_source": str(spec_path)},
+        {
+            "git_commit": current_git_commit(),
+            "source": git_provenance(),
+            "spec_source": str(spec_path),
+        },
         experiment_dir / "experiment_info.json",
     )
     return spec

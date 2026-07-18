@@ -137,7 +137,7 @@ across those comparisons — every Score/Select experiment is a controlled
 one-knob swap. Identity is a **prefix property**: once two systems select
 different candidates their observations legitimately diverge; the invariant is
 that candidate hashes match up to (and including) the first replan where the
-selected indices differ. `tests/test_system_candidate_identity.py` enforces it,
+selected indices differ. `tests/systems/test_system_candidate_identity.py` enforces it,
 and it must hold for every new Tier-1 system.
 
 ### 2.5 Fairness controls differ by stage

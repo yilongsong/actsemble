@@ -22,7 +22,7 @@ import torch
 
 from ..evaluation.panels import Panel
 from ..utils.hashing import hash_file
-from ..utils.repo import current_git_commit
+from ..utils.repo import current_git_commit, git_provenance
 from ..utils.serialization import load_json, save_json
 
 
@@ -81,29 +81,45 @@ def confirm_and_select(
         )
 
     history = load_json(run_dir / "screening" / "screening_history.json")
-    candidates = build_candidate_set(history, top_k=top_k, within_of_best=within_of_best)
-    print(f"[confirm] {len(candidates)} candidate checkpoint(s): "
-          f"steps {[c['step'] for c in candidates]}")
+    candidates = build_candidate_set(
+        history, top_k=top_k, within_of_best=within_of_best
+    )
+    print(
+        f"[confirm] {len(candidates)} candidate checkpoint(s): "
+        f"steps {[c['step'] for c in candidates]}"
+    )
 
     confirmed = []
     for cand in candidates:
         record = evaluate_checkpoint_on_panel(
-            cand["checkpoint_path"], confirmation_panel, env=env, device=device,
+            cand["checkpoint_path"],
+            confirmation_panel,
+            env=env,
+            device=device,
             max_steps=max_steps,
         )
-        confirmed.append({"step": cand["step"], "screening": cand, "confirmation": record})
-        print(f"[confirm] step {cand['step']}: confirmation "
-              f"{record['success_count']}/{record['num_episodes']} = "
-              f"{record['success_rate']:.1%} (screening {cand['success_rate']:.1%})")
+        confirmed.append(
+            {"step": cand["step"], "screening": cand, "confirmation": record}
+        )
+        print(
+            f"[confirm] step {cand['step']}: confirmation "
+            f"{record['success_count']}/{record['num_episodes']} = "
+            f"{record['success_rate']:.1%} (screening {cand['success_rate']:.1%})"
+        )
 
     winner = select_policy(confirmed)
-    print(f"[confirm] SELECTED step {winner['step']} "
-          f"(confirmation {winner['confirmation']['success_rate']:.1%})")
+    print(
+        f"[confirm] SELECTED step {winner['step']} "
+        f"(confirmation {winner['confirmation']['success_rate']:.1%})"
+    )
 
     # Re-save the winning checkpoint as the canonical frozen policy with the
     # full §17 audit trail embedded in its metadata.
-    ckpt = torch.load(winner["confirmation"]["checkpoint_path"], map_location="cpu",
-                      weights_only=False)
+    ckpt = torch.load(
+        winner["confirmation"]["checkpoint_path"],
+        map_location="cpu",
+        weights_only=False,
+    )
     train_cfg_path = run_dir / "train_config.json"
     train_config = load_json(train_cfg_path) if train_cfg_path.exists() else {}
     ckpt["meta"].setdefault("extra", {})["selection"] = {
@@ -117,17 +133,22 @@ def confirm_and_select(
         "screening_history": history,
         "confirmation_panel": confirmation_panel.to_dict(),
         "confirmation_history": [
-            {"step": c["step"],
-             "success_rate": c["confirmation"]["success_rate"],
-             "success_count": c["confirmation"]["success_count"],
-             "wilson_ci": c["confirmation"]["wilson_ci"],
-             "checkpoint_hash": c["confirmation"]["checkpoint_hash"]}
+            {
+                "step": c["step"],
+                "success_rate": c["confirmation"]["success_rate"],
+                "success_count": c["confirmation"]["success_count"],
+                "wilson_ci": c["confirmation"]["wilson_ci"],
+                "checkpoint_hash": c["confirmation"]["checkpoint_hash"],
+            }
             for c in confirmed
         ],
         "training_seed": train_config.get("training_seed"),
-        "training_budget": (train_config.get("policy_config", {}) or {}).get("training", {}),
+        "training_budget": (train_config.get("policy_config", {}) or {}).get(
+            "training", {}
+        ),
         "named_generator_seeds": train_config.get("named_generator_seeds"),
         "git_commit": current_git_commit(),
+        "source": git_provenance(),
     }
     torch.save(ckpt, selected_path)
 

@@ -19,9 +19,11 @@ import numpy as np
 
 @dataclass
 class DecisionContext:
-    observation_history: np.ndarray          # [obs_horizon, feat], oldest first (raw)
-    executed_actions: np.ndarray             # [n_executed, action_dim] committed so far (may be empty)
+    observation_history: np.ndarray  # [obs_horizon, feat], oldest first (raw)
+    executed_actions: (
+        np.ndarray
+    )  # [n_executed, action_dim] committed so far (may be empty)
     replan_index: int
-    policy: Any                              # frozen ActionChunkPolicy (a Scorer may re-query it)
-    components: list = field(default_factory=list)   # assembled same-data components
-    signal: dict | None = None               # Monitor output; None unless a Monitor stage is present
+    policy: Any  # frozen ActionChunkPolicy (a Scorer may re-query it)
+    components: list = field(default_factory=list)  # assembled same-data components
+    signal: dict | None = None  # Monitor output; None unless a Monitor stage is present

@@ -24,8 +24,15 @@ from .interface import ReplanningSystemBase
 class MeanScoreRerankingActsemble(ReplanningSystemBase):
     name = "verifier_ensemble_mean"
 
-    def __init__(self, policy, components, *, num_candidates: int,
-                 action_horizon=None, candidate_root_seed: int = 0):
+    def __init__(
+        self,
+        policy,
+        components,
+        *,
+        num_candidates: int,
+        action_horizon=None,
+        candidate_root_seed: int = 0,
+    ):
         super().__init__(
             policy,
             num_candidates=num_candidates,
@@ -39,8 +46,9 @@ class MeanScoreRerankingActsemble(ReplanningSystemBase):
     def components(self) -> list:
         return self._components
 
-    def _select(self, candidates: torch.Tensor, scores, valid: torch.Tensor,
-                ctx, record: dict) -> int:
+    def _select(
+        self, candidates: torch.Tensor, scores, valid: torch.Tensor, ctx, record: dict
+    ) -> int:
         t0 = time.perf_counter()
         try:
             hist_t = torch.from_numpy(np.ascontiguousarray(ctx.observation_history))
@@ -66,5 +74,7 @@ class MeanScoreRerankingActsemble(ReplanningSystemBase):
         except Exception as exc:  # never end the episode because scoring failed
             record["component_latency_s"] = time.perf_counter() - t0
             record["fallback"] = True
-            record["fallback_reason"] = f"component_exception: {type(exc).__name__}: {exc}"
+            record["fallback_reason"] = (
+                f"component_exception: {type(exc).__name__}: {exc}"
+            )
             return 0

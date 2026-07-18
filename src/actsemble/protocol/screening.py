@@ -113,6 +113,8 @@ def screen_checkpoint(
             "success_rate": record["success_rate"],
             "wilson_ci": record["wilson_ci"],
             "exceptions": record["exceptions"],
+            "panel": record["panel"],
+            "num_episodes": record["num_episodes"],
         }
     )
     history.sort(key=lambda h: h["step"])
@@ -125,8 +127,9 @@ def screen_checkpoint(
     return record
 
 
-def make_screening_callback(run_dir: str | Path, panel: Panel, *, env, device: str,
-                            max_steps: int = 100):
+def make_screening_callback(
+    run_dir: str | Path, panel: Panel, *, env, device: str, max_steps: int = 100
+):
     """The trainer's on_checkpoint hook (invoked inside the RNG guard)."""
 
     def on_checkpoint(*, step: int, checkpoint_path: Path) -> None:
@@ -137,13 +140,16 @@ def make_screening_callback(run_dir: str | Path, panel: Panel, *, env, device: s
     return on_checkpoint
 
 
-def screen_all_snapshots(run_dir: str | Path, panel: Panel, *, env, device: str,
-                         max_steps: int = 100) -> list[dict]:
+def screen_all_snapshots(
+    run_dir: str | Path, panel: Panel, *, env, device: str, max_steps: int = 100
+) -> list[dict]:
     """(Re-)screen every saved interval snapshot of a training run."""
     snapshots = sorted((Path(run_dir) / "checkpoints").glob("step_*.pt"))
     if not snapshots:
         raise FileNotFoundError(f"No interval snapshots under {run_dir}/checkpoints")
     return [
-        screen_checkpoint(p, run_dir, panel, env=env, device=device, max_steps=max_steps)
+        screen_checkpoint(
+            p, run_dir, panel, env=env, device=device, max_steps=max_steps
+        )
         for p in snapshots
     ]

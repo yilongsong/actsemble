@@ -1,0 +1,6 @@
+# Pilot dataset: all successful PushT-v1 RL demonstrations (719 episodes).
+task_id: PushT-v1
+control_mode: pd_ee_delta_pose
+sim_backend: physx_cuda
+max_episodes: null
+seed: 0

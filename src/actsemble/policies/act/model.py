@@ -53,9 +53,13 @@ class DETREncoderLayer(nn.Module):
     """Post-norm transformer encoder layer (DETR/ACT). The positional embedding
     is added to the attention query/key only, never to the value; ReLU FFN."""
 
-    def __init__(self, d_model: int, n_heads: int, dim_feedforward: int, dropout: float):
+    def __init__(
+        self, d_model: int, n_heads: int, dim_feedforward: int, dropout: float
+    ):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+        self.self_attn = nn.MultiheadAttention(
+            d_model, n_heads, dropout=dropout, batch_first=True
+        )
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
         self.norm1 = nn.LayerNorm(d_model)
@@ -81,10 +85,16 @@ class DETRDecoderLayer(nn.Module):
     cross-attention queries, the memory positional embedding into the
     cross-attention keys (never values); ReLU FFN."""
 
-    def __init__(self, d_model: int, n_heads: int, dim_feedforward: int, dropout: float):
+    def __init__(
+        self, d_model: int, n_heads: int, dim_feedforward: int, dropout: float
+    ):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
-        self.cross_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+        self.self_attn = nn.MultiheadAttention(
+            d_model, n_heads, dropout=dropout, batch_first=True
+        )
+        self.cross_attn = nn.MultiheadAttention(
+            d_model, n_heads, dropout=dropout, batch_first=True
+        )
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
         self.norm1 = nn.LayerNorm(d_model)
@@ -131,7 +141,9 @@ class ACTModel(nn.Module):
     ):
         super().__init__()
         if pos_embedding not in ("learned", "sinusoidal"):
-            raise ValueError(f"pos_embedding must be learned|sinusoidal, got {pos_embedding!r}")
+            raise ValueError(
+                f"pos_embedding must be learned|sinusoidal, got {pos_embedding!r}"
+            )
         if arch not in ("torch_builtin", "detr"):
             raise ValueError(f"arch must be torch_builtin|detr, got {arch!r}")
         self.pos_embedding = pos_embedding
@@ -150,8 +162,12 @@ class ACTModel(nn.Module):
         # -- CVAE style encoder: [CLS, obs(H_o), actions(H_p)] -> (mu, logvar)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, hidden_dim))
         n_style = 1 + obs_horizon + prediction_horizon
-        if pos_embedding == "sinusoidal":  # canonical ACT: fixed sinusoidal on the CVAE encoder
-            self.register_buffer("style_pos", sinusoid_table(n_style, hidden_dim), persistent=False)
+        if (
+            pos_embedding == "sinusoidal"
+        ):  # canonical ACT: fixed sinusoidal on the CVAE encoder
+            self.register_buffer(
+                "style_pos", sinusoid_table(n_style, hidden_dim), persistent=False
+            )
         else:
             self.style_pos = nn.Parameter(torch.zeros(1, n_style, hidden_dim))
         self.latent_head = nn.Linear(hidden_dim, 2 * latent_dim)
@@ -163,18 +179,29 @@ class ACTModel(nn.Module):
         self.action_head = nn.Linear(hidden_dim, action_dim)
 
         if arch == "torch_builtin":
+
             def enc_stack(n):
                 layer = nn.TransformerEncoderLayer(
-                    hidden_dim, n_heads, dim_feedforward, dropout,
-                    activation="gelu", batch_first=True, norm_first=True,
+                    hidden_dim,
+                    n_heads,
+                    dim_feedforward,
+                    dropout,
+                    activation="gelu",
+                    batch_first=True,
+                    norm_first=True,
                 )
                 return nn.TransformerEncoder(layer, n, enable_nested_tensor=False)
 
             self.style_encoder = enc_stack(n_encoder_layers)
             self.memory_encoder = enc_stack(n_encoder_layers)
             dec_layer = nn.TransformerDecoderLayer(
-                hidden_dim, n_heads, dim_feedforward, dropout,
-                activation="gelu", batch_first=True, norm_first=True,
+                hidden_dim,
+                n_heads,
+                dim_feedforward,
+                dropout,
+                activation="gelu",
+                batch_first=True,
+                norm_first=True,
             )
             self.decoder = nn.TransformerDecoder(dec_layer, n_decoder_layers)
         else:  # detr: faithful post-norm/ReLU layers with per-layer pos injection
@@ -207,13 +234,23 @@ class ACTModel(nn.Module):
                 for p in module.parameters():
                     if p.dim() > 1:
                         nn.init.xavier_uniform_(p)
-            for lin in (self.obs_proj, self.obs_proj_dec, self.action_proj,
-                        self.latent_proj, self.latent_head, self.action_head):
+            for lin in (
+                self.obs_proj,
+                self.obs_proj_dec,
+                self.action_proj,
+                self.latent_proj,
+                self.latent_head,
+                self.action_head,
+            ):
                 nn.init.xavier_uniform_(lin.weight)
                 nn.init.zeros_(lin.bias)
 
-    def encode_style(self, obs: torch.Tensor, actions: torch.Tensor,
-                     action_mask: torch.Tensor | None = None):
+    def encode_style(
+        self,
+        obs: torch.Tensor,
+        actions: torch.Tensor,
+        action_mask: torch.Tensor | None = None,
+    ):
         """[B,H_o,feat], [B,H_p,A] -> mu, logvar  (each [B, latent_dim]).
 
         ``action_mask`` ([B,H_p] bool, True = real) excludes padded (replicated
@@ -221,15 +258,25 @@ class ACTModel(nn.Module):
         not pollute the latent posterior (canonical ACT)."""
         b = obs.shape[0]
         tokens = torch.cat(
-            [self.cls_token.expand(b, -1, -1), self.obs_proj(obs), self.action_proj(actions)],
+            [
+                self.cls_token.expand(b, -1, -1),
+                self.obs_proj(obs),
+                self.action_proj(actions),
+            ],
             dim=1,
         )
         key_padding_mask = None
         if action_mask is not None:
-            prefix = torch.zeros(b, 1 + self.obs_horizon, dtype=torch.bool, device=obs.device)
-            key_padding_mask = torch.cat([prefix, ~action_mask.bool()], dim=1)  # True = ignore
+            prefix = torch.zeros(
+                b, 1 + self.obs_horizon, dtype=torch.bool, device=obs.device
+            )
+            key_padding_mask = torch.cat(
+                [prefix, ~action_mask.bool()], dim=1
+            )  # True = ignore
         if self.arch == "torch_builtin":
-            cls = self.style_encoder(tokens + self.style_pos, src_key_padding_mask=key_padding_mask)[:, 0]
+            cls = self.style_encoder(
+                tokens + self.style_pos, src_key_padding_mask=key_padding_mask
+            )[:, 0]
         else:
             h = tokens
             for layer in self.style_layers:
@@ -242,12 +289,16 @@ class ACTModel(nn.Module):
         """[B,H_o,feat], [B,latent_dim] -> predicted action chunk [B,H_p,A]."""
         b = obs.shape[0]
         if self.arch == "torch_builtin":
-            memory = torch.cat([self.latent_proj(z).unsqueeze(1), self.obs_proj(obs)], dim=1)
+            memory = torch.cat(
+                [self.latent_proj(z).unsqueeze(1), self.obs_proj(obs)], dim=1
+            )
             memory = self.memory_encoder(memory + self.memory_pos)
             h = self.decoder(self.query_embed.expand(b, -1, -1), memory)
             return self.action_head(h)
         # detr: separate decoder obs projection, zero-target decode, final norm
-        memory = torch.cat([self.latent_proj(z).unsqueeze(1), self.obs_proj_dec(obs)], dim=1)
+        memory = torch.cat(
+            [self.latent_proj(z).unsqueeze(1), self.obs_proj_dec(obs)], dim=1
+        )
         for layer in self.memory_layers:
             memory = layer(memory, pos=self.memory_pos)
         query_pos = self.query_embed.expand(b, -1, -1)
@@ -256,9 +307,14 @@ class ACTModel(nn.Module):
             h = layer(h, memory, query_pos=query_pos, memory_pos=self.memory_pos)
         return self.action_head(self.decoder_norm(h))
 
-    def forward(self, obs: torch.Tensor, actions: torch.Tensor, *,
-                action_mask: torch.Tensor | None = None,
-                generator: torch.Generator | None = None):
+    def forward(
+        self,
+        obs: torch.Tensor,
+        actions: torch.Tensor,
+        *,
+        action_mask: torch.Tensor | None = None,
+        generator: torch.Generator | None = None,
+    ):
         """Full CVAE forward (training): returns (pred_chunk, mu, logvar).
         Padded action positions (``action_mask`` False) are excluded from the
         style encoder; the caller masks them out of the reconstruction loss."""

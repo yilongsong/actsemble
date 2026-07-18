@@ -34,7 +34,9 @@ from actsemble.utils.serialization import save_json
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spec", required=True, help="protocol spec YAML")
-    parser.add_argument("--data-config", required=True, help="data config for subset export")
+    parser.add_argument(
+        "--data-config", required=True, help="data config for subset export"
+    )
     parser.add_argument("--workdir", required=True)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
@@ -60,9 +62,16 @@ def main() -> int:
         if not dataset.exists():
             print(f"[ndemos] preparing nested subset size={size} seed={subset_seed}")
             subprocess.run(
-                [sys.executable, str(repo / "scripts" / "prepare_dataset.py"),
-                 "--config", args.data_config, "--output", str(dataset),
-                 "--subset-size", str(size)],
+                [
+                    sys.executable,
+                    str(repo / "scripts" / "prepare_dataset.py"),
+                    "--config",
+                    args.data_config,
+                    "--output",
+                    str(dataset),
+                    "--subset-size",
+                    str(size),
+                ],
                 check=True,
             )
         per_seed_success = []
@@ -71,15 +80,28 @@ def main() -> int:
             selected = run_dir / "selected_policy.pt"
             if not selected.exists():
                 _train_and_select(spec, dataset, run_dir, policy_seed, device)
-            rate = _evaluate_selected(selected, dev_panel, dataset, device,
-                                      int(spec.get("episode_max_steps", 100)))
+            rate = _evaluate_selected(
+                selected,
+                dev_panel,
+                dataset,
+                device,
+                int(spec.get("episode_max_steps", 100)),
+            )
             print(f"[ndemos] size={size} seed={policy_seed}: dev success {rate:.1%}")
             per_seed_success.append(rate)
         mean = sum(per_seed_success) / len(per_seed_success)
-        results.append({"n_demos": size, "per_seed_success": per_seed_success,
-                        "mean_success": mean, "in_target": lo <= mean <= hi})
-        print(f"[ndemos] size={size}: mean selected-policy success {mean:.1%} "
-              f"(target [{lo:.0%}, {hi:.0%}])")
+        results.append(
+            {
+                "n_demos": size,
+                "per_seed_success": per_seed_success,
+                "mean_success": mean,
+                "in_target": lo <= mean <= hi,
+            }
+        )
+        print(
+            f"[ndemos] size={size}: mean selected-policy success {mean:.1%} "
+            f"(target [{lo:.0%}, {hi:.0%}])"
+        )
 
     in_range = [r for r in results if r["in_target"]]
     selected = max(in_range, key=lambda r: r["n_demos"]) if in_range else None
@@ -87,13 +109,17 @@ def main() -> int:
         "candidate_results": results,
         "target_range": [lo, hi],
         "selected_n_demos": selected["n_demos"] if selected else None,
-        "note": ("If no candidate lies in the target range, add intermediate "
-                 "nested sizes and rerun (§7). Never use the final-test panel here."),
+        "note": (
+            "If no candidate lies in the target range, add intermediate "
+            "nested sizes and rerun (§7). Never use the final-test panel here."
+        ),
     }
     save_json(report, workdir / "dataset_size_selection.json")
     if selected:
-        print(f"[ndemos] SELECTED n_demos = {selected['n_demos']} "
-              f"(mean success {selected['mean_success']:.1%})")
+        print(
+            f"[ndemos] SELECTED n_demos = {selected['n_demos']} "
+            f"(mean success {selected['mean_success']:.1%})"
+        )
         return 0
     print("[ndemos] NO candidate size in target range — add intermediate sizes (§7)")
     return 1
@@ -110,20 +136,35 @@ def _train_and_select(spec, dataset, run_dir, policy_seed, device):
     panels = load_panels(spec.get("panels"))
     policy_cfg = resolved_policy_config(spec, policy_seed)
     meta = DatasetReader(dataset).metadata
-    env = make_env(task_id=meta.task_id, control_mode=meta.controller,
-                   sim_backend=meta.simulation_backend, obs_mode="state", render_mode=None)
+    env = make_env(
+        task_id=meta.task_id,
+        control_mode=meta.controller,
+        sim_backend=meta.simulation_backend,
+        obs_mode="state",
+        render_mode=None,
+    )
     try:
         max_steps = int(spec.get("episode_max_steps", 100))
         train_diffusion_policy(
-            policy_cfg=policy_cfg, dataset_path=dataset, output_dir=run_dir,
+            policy_cfg=policy_cfg,
+            dataset_path=dataset,
+            output_dir=run_dir,
             device=device,
             on_checkpoint=make_screening_callback(
-                run_dir, panels["screening"], env=env, device=device, max_steps=max_steps
+                run_dir,
+                panels["screening"],
+                env=env,
+                device=device,
+                max_steps=max_steps,
             ),
         )
         rule = spec.get("confirmation_rule", {}) or {}
         confirm_and_select(
-            run_dir, panels["confirmation"], env=env, device=device, max_steps=max_steps,
+            run_dir,
+            panels["confirmation"],
+            env=env,
+            device=device,
+            max_steps=max_steps,
             top_k=int(rule.get("top_k", 5)),
             within_of_best=float(rule.get("within_of_best", 0.10)),
         )
@@ -137,8 +178,13 @@ def _evaluate_selected(selected_policy, panel, dataset, device, max_steps) -> fl
     from actsemble.sim.env_factory import make_env
 
     meta = DatasetReader(dataset).metadata
-    env = make_env(task_id=meta.task_id, control_mode=meta.controller,
-                   sim_backend=meta.simulation_backend, obs_mode="state", render_mode=None)
+    env = make_env(
+        task_id=meta.task_id,
+        control_mode=meta.controller,
+        sim_backend=meta.simulation_backend,
+        obs_mode="state",
+        render_mode=None,
+    )
     try:
         record = evaluate_checkpoint_on_panel(
             selected_policy, panel, env=env, device=device, max_steps=max_steps

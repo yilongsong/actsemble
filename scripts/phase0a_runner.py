@@ -29,11 +29,17 @@ def run_job(job: dict, gpu: int) -> tuple[dict, int]:
     with open(log_path, "w") as log:
         proc = subprocess.run(
             [sys.executable, str(REPO / script), *job["args"]],
-            stdout=log, stderr=subprocess.STDOUT, env=env, cwd=REPO,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            env=env,
+            cwd=REPO,
         )
     dt = time.time() - t0
     status = "OK" if proc.returncode == 0 else f"FAIL({proc.returncode})"
-    print(f"[runner] {status} gpu{gpu} {' '.join(job['args'])} ({dt/60:.1f} min)", flush=True)
+    print(
+        f"[runner] {status} gpu{gpu} {' '.join(job['args'])} ({dt / 60:.1f} min)",
+        flush=True,
+    )
     return job, proc.returncode
 
 

@@ -14,6 +14,8 @@ zero before trusting a regime (see docs/experiment_contract.md).
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import torch
 
@@ -39,6 +41,12 @@ class ObjectNudgePerturbation(NoOpPerturbation):
         self.max_yaw = float(np.deg2rad(max_yaw_degrees))
         self.step_window = (int(step_window[0]), int(step_window[1]))
         self.position_clamp = float(position_clamp)
+        if self.max_translation < 0 or self.max_yaw < 0:
+            raise ValueError("object-nudge magnitudes must be nonnegative")
+        if self.step_window[0] < 0 or self.step_window[1] < self.step_window[0]:
+            raise ValueError(f"invalid object-nudge step_window {self.step_window}")
+        if self.position_clamp <= 0:
+            raise ValueError("position_clamp must be positive")
         self.seed = int(seed)
         self._trigger_step = -1
         self._applied = False
@@ -54,7 +62,7 @@ class ObjectNudgePerturbation(NoOpPerturbation):
         self._delta = np.array([radius * np.cos(angle), radius * np.sin(angle), yaw])
         self._applied = False
 
-    def before_step(self, env: object, step_index: int) -> None:
+    def before_step(self, env: Any, step_index: int) -> None:
         if self._applied or step_index != self._trigger_step:
             return
         self._applied = True
@@ -66,12 +74,19 @@ class ObjectNudgePerturbation(NoOpPerturbation):
                 f"object_nudge: actor {self.actor_name!r} not in env state "
                 f"(have {sorted(actors.keys())})"
             )
-        pose = actors[self.actor_name].clone()  # [1, 13]: pos(3) quat(wxyz 4) vel(3) angvel(3)
+        pose = actors[
+            self.actor_name
+        ].clone()  # [1, 13]: pos(3) quat(wxyz 4) vel(3) angvel(3)
+        assert self._delta is not None
         dx, dy, dyaw = self._delta
-        pose[0, 0] = torch.clamp(pose[0, 0] + dx, -self.position_clamp, self.position_clamp)
-        pose[0, 1] = torch.clamp(pose[0, 1] + dy, -self.position_clamp, self.position_clamp)
+        pose[0, 0] = torch.clamp(
+            pose[0, 0] + dx, -self.position_clamp, self.position_clamp
+        )
+        pose[0, 1] = torch.clamp(
+            pose[0, 1] + dy, -self.position_clamp, self.position_clamp
+        )
         w, x, y, z = pose[0, 3], pose[0, 4], pose[0, 5], pose[0, 6]
-        half = torch.tensor(dyaw / 2.0, dtype=pose.dtype)
+        half = pose.new_tensor(dyaw / 2.0)
         dw, dz = torch.cos(half), torch.sin(half)
         # Quaternion product (dw,0,0,dz) * (w,x,y,z): rotate about world z.
         pose[0, 3] = dw * w - dz * z

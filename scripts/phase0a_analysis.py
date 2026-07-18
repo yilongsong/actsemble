@@ -24,7 +24,7 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from actsemble.utils.serialization import load_json, save_json
+from actsemble.utils.serialization import load_json, save_json  # noqa: E402
 
 OUT = REPO / "outputs" / "phase0a_v1"
 ANA = OUT / "analysis"
@@ -32,14 +32,18 @@ ANA = OUT / "analysis"
 
 def pair_results(seed: int) -> dict:
     base = OUT / "pairs" / f"pair_{seed}" / "final_test" / "nominal"
-    return {n: load_json(base / f"eval_{n}.json")
-            for n in ("standalone", "control", "actsemble")}
+    return {
+        n: load_json(base / f"eval_{n}.json")
+        for n in ("standalone", "control", "actsemble")
+    }
 
 
 def final_seeds() -> list[int]:
     from actsemble.config import load_config
 
-    return [int(x) for x in load_config(OUT / "experiment_spec.yaml")["final_policy_seeds"]]
+    return [
+        int(x) for x in load_config(OUT / "experiment_spec.yaml")["final_policy_seeds"]
+    ]
 
 
 # ------------------------------------------------------------ diagnostics ----
@@ -50,8 +54,12 @@ def cmd_diagnostics(args):
     for seed in final_seeds():
         r = pair_results(seed)
         sa, ac = r["standalone"], r["actsemble"]
-        categories = {"actsemble_only_success": [], "standalone_only_success": [],
-                      "both_succeed": [], "both_fail": []}
+        categories = {
+            "actsemble_only_success": [],
+            "standalone_only_success": [],
+            "both_succeed": [],
+            "both_fail": [],
+        }
         for ea, ec in zip(sa["episodes"], ac["episodes"]):
             key = {
                 (False, True): "actsemble_only_success",
@@ -75,19 +83,25 @@ def cmd_diagnostics(args):
                 if scores:
                     srt = sorted(scores, reverse=True)
                     margins.append(srt[0] - srt[1])
-                    margin_by_outcome["success" if ec["success_once"] else "failure"].append(
-                        srt[0] - srt[1]
-                    )
+                    margin_by_outcome[
+                        "success" if ec["success_once"] else "failure"
+                    ].append(srt[0] - srt[1])
                 ma, sm = rp["candidate_mean_abs"], rp["candidate_smoothness"]
-                sel_mag.append(ma[idx]); zero_mag.append(ma[0])
-                sel_smooth.append(sm[idx]); zero_smooth.append(sm[0])
+                sel_mag.append(ma[idx])
+                zero_mag.append(ma[0])
+                sel_smooth.append(sm[idx])
+                zero_smooth.append(sm[0])
         all_margins_succ += margin_by_outcome["success"]
         all_margins_fail += margin_by_outcome["failure"]
 
         def stats(x):
             x = np.asarray(x, dtype=np.float64)
-            return {"mean": float(x.mean()), "median": float(np.median(x)),
-                    "p10": float(np.quantile(x, 0.1)), "p90": float(np.quantile(x, 0.9))}
+            return {
+                "mean": float(x.mean()),
+                "median": float(np.median(x)),
+                "p10": float(np.quantile(x, 0.1)),
+                "p90": float(np.quantile(x, 0.9)),
+            }
 
         per_pair[f"pair_{seed}"] = {
             "paired_categories": {k: len(v) for k, v in categories.items()},
@@ -96,9 +110,11 @@ def cmd_diagnostics(args):
             "selected_index_histogram": dict(sorted(index_hist.items())),
             "verifier_score_margin_top1_top2": stats(margins) if margins else None,
             "margin_success_episodes": stats(margin_by_outcome["success"])
-            if margin_by_outcome["success"] else None,
+            if margin_by_outcome["success"]
+            else None,
             "margin_failure_episodes": stats(margin_by_outcome["failure"])
-            if margin_by_outcome["failure"] else None,
+            if margin_by_outcome["failure"]
+            else None,
             "selected_chunk_mean_abs": stats(sel_mag),
             "candidate_zero_mean_abs": stats(zero_mag),
             "selected_chunk_smoothness_mean_abs_delta": stats(sel_smooth),
@@ -111,8 +127,12 @@ def cmd_diagnostics(args):
         }
     report = {
         "per_pair": per_pair,
-        "pooled_margin_success": float(np.mean(all_margins_succ)) if all_margins_succ else None,
-        "pooled_margin_failure": float(np.mean(all_margins_fail)) if all_margins_fail else None,
+        "pooled_margin_success": float(np.mean(all_margins_succ))
+        if all_margins_succ
+        else None,
+        "pooled_margin_failure": float(np.mean(all_margins_fail))
+        if all_margins_fail
+        else None,
         "notes": [
             "candidate diversity + support distance come from replay-sample",
             "all statistics observe the frozen systems; nothing was retrained",
@@ -121,9 +141,11 @@ def cmd_diagnostics(args):
     save_json(report, ANA / "diagnostic_statistics.json")
     for name, p in per_pair.items():
         c = p["paired_categories"]
-        print(f"[diag] {name}: A-only {c['actsemble_only_success']}, "
-              f"S-only {c['standalone_only_success']}, both+ {c['both_succeed']}, "
-              f"both- {c['both_fail']}, change {p['candidate_change_rate']:.1%}")
+        print(
+            f"[diag] {name}: A-only {c['actsemble_only_success']}, "
+            f"S-only {c['standalone_only_success']}, both+ {c['both_succeed']}, "
+            f"both- {c['both_fail']}, change {p['candidate_change_rate']:.1%}"
+        )
 
 
 # ---------------------------------------------------------- replay sample ----
@@ -167,12 +189,17 @@ def cmd_replay_sample(args):
         r = pair_results(seed)
         ac = r["actsemble"]
         device = args.device or "cuda"
-        policy = _CapturePolicy(DiffusionPolicy.from_checkpoint(
-            freeze["policy"]["path"], device=device, use_ema=True))
+        policy = _CapturePolicy(
+            DiffusionPolicy.from_checkpoint(
+                freeze["policy"]["path"], device=device, use_ema=True
+            )
+        )
         verifier = ActionChunkCompatibility.from_checkpoint(
-            freeze["verifier"]["path"], device=device)
+            freeze["verifier"]["path"], device=device
+        )
         system = CandidateRerankingActsemble(
-            policy, verifier, num_candidates=freeze["system"]["num_candidates"])
+            policy, verifier, num_candidates=freeze["system"]["num_candidates"]
+        )
         # demo action-chunk bank for support distance (subsampled)
         reader = DatasetReader(freeze["dataset"]["path"])
         bank = []
@@ -187,18 +214,22 @@ def cmd_replay_sample(args):
             task_id=freeze["environment"]["task_id"],
             control_mode=freeze["environment"]["controller"],
             sim_backend=freeze["environment"]["simulation_backend"],
-            obs_mode="state", render_mode=None,
+            obs_mode="state",
+            render_mode=None,
         )
         diversity, support_sel, support_zero, replay_match = [], [], [], []
         try:
             for erow in ac["episodes"][:n_eps]:
                 ep = PanelEpisode(
-                    episode_index=erow["episode_index"], env_seed=erow["env_seed"],
+                    episode_index=erow["episode_index"],
+                    env_seed=erow["env_seed"],
                     policy_sampling_seed=erow["policy_sampling_seed"],
                     perturbation_seed=erow["perturbation_seed"],
                 )
                 policy.tensors = []
-                result, _ = run_panel_episode(env, system, ep, max_steps=100, pert_specs=[])
+                result, _ = run_panel_episode(
+                    env, system, ep, max_steps=100, pert_specs=[]
+                )
                 replay_match.append(result.success_once == erow["success_once"])
                 sels = system.diagnostics()["selected_indices"]
                 for tensor, sel in zip(policy.tensors, sels):
@@ -207,9 +238,11 @@ def cmd_replay_sample(args):
                     d = torch.cdist(flat, flat)
                     k = flat.shape[0]
                     diversity.append(float(d.sum() / (k * (k - 1))))
+
                     # support distance: min mean-|.| distance to demo bank
                     def support(v):
                         return float((bank_t - v).abs().mean(dim=1).min())
+
                     support_sel.append(support(flat[sel]))
                     support_zero.append(support(flat[0]))
         finally:
@@ -223,9 +256,11 @@ def cmd_replay_sample(args):
             "selected_closer_to_demo_support": float(np.mean(support_sel))
             < float(np.mean(support_zero)),
         }
-        print(f"[replay] pair_{seed}: outcomes match {rows[f'pair_{seed}']['replay_outcome_matches_recorded']}, "
-              f"diversity {rows[f'pair_{seed}']['candidate_diversity_mean_pairwise_l2']:.3f}, "
-              f"support sel {np.mean(support_sel):.4f} vs zero {np.mean(support_zero):.4f}")
+        print(
+            f"[replay] pair_{seed}: outcomes match {rows[f'pair_{seed}']['replay_outcome_matches_recorded']}, "
+            f"diversity {rows[f'pair_{seed}']['candidate_diversity_mean_pairwise_l2']:.3f}, "
+            f"support sel {np.mean(support_sel):.4f} vs zero {np.mean(support_zero):.4f}"
+        )
     save_json(rows, ANA / "replay_sample_statistics.json")
 
 
@@ -249,7 +284,9 @@ def cmd_videos(args):
     freeze = load_freeze(OUT / "pairs" / f"pair_{seed}")
     device = args.device or "cuda"
     policy = DiffusionPolicy.from_checkpoint(freeze["policy"]["path"], device=device)
-    verifier = ActionChunkCompatibility.from_checkpoint(freeze["verifier"]["path"], device=device)
+    verifier = ActionChunkCompatibility.from_checkpoint(
+        freeze["verifier"]["path"], device=device
+    )
     k = freeze["system"]["num_candidates"]
     systems = {
         "standalone": StandaloneDiffusionSystem(policy, num_candidates=k),
@@ -260,7 +297,8 @@ def cmd_videos(args):
         task_id=freeze["environment"]["task_id"],
         control_mode=freeze["environment"]["controller"],
         sim_backend=freeze["environment"]["simulation_backend"],
-        obs_mode="state", render_mode="rgb_array",
+        obs_mode="state",
+        render_mode="rgb_array",
     )
     try:
         cats = diag["per_pair"][f"pair_{seed}"]["category_env_seeds_sample"]
@@ -268,16 +306,28 @@ def cmd_videos(args):
             for env_seed in env_seeds[:per_category]:
                 row = ac_rows[env_seed]
                 ep = PanelEpisode(
-                    episode_index=row["episode_index"], env_seed=env_seed,
+                    episode_index=row["episode_index"],
+                    env_seed=env_seed,
                     policy_sampling_seed=row["policy_sampling_seed"],
                     perturbation_seed=row["perturbation_seed"],
                 )
                 for name, system in systems.items():
                     _, frames = run_panel_episode(
-                        env, system, ep, max_steps=100, pert_specs=[], capture_video=True
+                        env,
+                        system,
+                        ep,
+                        max_steps=100,
+                        pert_specs=[],
+                        capture_video=True,
                     )
-                    save_video(frames, ANA / "videos" / f"pair_{seed}" / cat
-                               / f"{name}_seed{env_seed}.mp4")
+                    save_video(
+                        frames,
+                        ANA
+                        / "videos"
+                        / f"pair_{seed}"
+                        / cat
+                        / f"{name}_seed{env_seed}.mp4",
+                    )
         print(f"[videos] saved under {ANA / 'videos' / f'pair_{seed}'}")
     finally:
         env.close()
@@ -287,8 +337,11 @@ def cmd_videos(args):
 def cmd_report(args):
     paired = load_json(ANA / "paired_results.json")
     diag = load_json(ANA / "diagnostic_statistics.json")
-    replay = (load_json(ANA / "replay_sample_statistics.json")
-              if (ANA / "replay_sample_statistics.json").exists() else {})
+    replay = (
+        load_json(ANA / "replay_sample_statistics.json")
+        if (ANA / "replay_sample_statistics.json").exists()
+        else {}
+    )
     cand = load_json(OUT / "integration" / "candidate_identity_report.json")
     act = load_json(OUT / "integration" / "action_identity_report.json")
     sel = load_json(OUT / "primary_dataset_selection.json")
@@ -366,14 +419,20 @@ def _ci(entry):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=["diagnostics", "replay-sample", "videos", "report"])
+    parser.add_argument(
+        "stage", choices=["diagnostics", "replay-sample", "videos", "report"]
+    )
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--per-category", type=int, default=2)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
-    {"diagnostics": cmd_diagnostics, "replay-sample": cmd_replay_sample,
-     "videos": cmd_videos, "report": cmd_report}[args.stage](args)
+    {
+        "diagnostics": cmd_diagnostics,
+        "replay-sample": cmd_replay_sample,
+        "videos": cmd_videos,
+        "report": cmd_report,
+    }[args.stage](args)
     return 0
 
 

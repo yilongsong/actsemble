@@ -8,6 +8,8 @@ EnvironmentMismatchError.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 import gymnasium as gym
@@ -29,7 +31,7 @@ def make_env(
     max_episode_steps: int | None = None,
     warmup_episodes: int = 2,
 ):
-    kwargs = dict(
+    kwargs: dict[str, Any] = dict(
         obs_mode=obs_mode,
         control_mode=control_mode,
         sim_backend=sim_backend,
@@ -95,7 +97,9 @@ def verify_env_matches(env, expected: dict, *, what: str) -> None:
     for key, want in expected.items():
         have = actual.get(key)
         if isinstance(want, np.ndarray) or isinstance(have, np.ndarray):
-            ok = np.allclose(np.asarray(have, dtype=np.float64), np.asarray(want, dtype=np.float64))
+            ok = np.allclose(
+                np.asarray(have, dtype=np.float64), np.asarray(want, dtype=np.float64)
+            )
         else:
             ok = have == want
         if not ok:

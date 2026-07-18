@@ -43,12 +43,16 @@ def main() -> int:
     print(f"[train_component] steps: {summary['steps']}")
     print(f"[train_component] final train loss: {summary['final_train_loss']:.5f}")
     ev = summary["offline_eval"]
-    print(f"[train_component] offline ({ev['evaluated_on']}): "
-          f"pos_acc={ev['positive_accuracy']:.3f} "
-          f"neg_acc={ev['negative_accuracy']:.3f} "
-          f"ranking_acc={ev['pairwise_ranking_accuracy']:.3f}")
-    print("[train_component] NOTE: high offline compatibility accuracy does not imply "
-          "improved closed-loop task success; closed-loop evaluation is the decisive test.")
+    print(
+        f"[train_component] offline ({ev['evaluated_on']}): "
+        f"pos_acc={ev['positive_accuracy']:.3f} "
+        f"neg_acc={ev['negative_accuracy']:.3f} "
+        f"ranking_acc={ev['pairwise_ranking_accuracy']:.3f}"
+    )
+    print(
+        "[train_component] NOTE: high offline compatibility accuracy does not imply "
+        "improved closed-loop task success; closed-loop evaluation is the decisive test."
+    )
     for name, path in summary["checkpoints"].items():
         print(f"[train_component] checkpoint {name}: {path}")
     return 0

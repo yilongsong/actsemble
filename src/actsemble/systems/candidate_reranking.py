@@ -6,8 +6,10 @@ compatibility component scores every candidate and the highest-scoring
 valid chunk is executed.
 
 Fallback contract:
-* all component scores invalid  -> candidate 0 (recorded);
-* component raises              -> candidate 0 (recorded);
+* all component scores invalid  -> request candidate 0 (recorded);
+* component raises              -> request candidate 0 (recorded);
+* if candidate 0 is non-finite  -> shared layer selects first finite candidate;
+* no finite policy candidate    -> raise instead of executing invalid actions;
 * an episode is never terminated because the component failed.
 """
 
@@ -19,7 +21,7 @@ import numpy as np
 import torch
 
 from ..components.interface import ActionChunkCompatibilityScorer
-from .interface import ReplanningSystemBase
+from .interface import ReplanningSystemBase, synchronize_device
 
 
 class CandidateRerankingActsemble(ReplanningSystemBase):
@@ -45,13 +47,17 @@ class CandidateRerankingActsemble(ReplanningSystemBase):
     def components(self) -> list:
         return [self.component]
 
-    def _select(self, candidates: torch.Tensor, scores, valid: torch.Tensor,
-                ctx, record: dict) -> int:
+    def _select(
+        self, candidates: torch.Tensor, scores, valid: torch.Tensor, ctx, record: dict
+    ) -> int:
+        synchronize_device(getattr(self.component, "device", torch.device("cpu")))
         t0 = time.perf_counter()
         try:
             scores = self.component.score(
-                torch.from_numpy(np.ascontiguousarray(ctx.observation_history)), candidates
+                torch.from_numpy(np.ascontiguousarray(ctx.observation_history)),
+                candidates,
             )
+            synchronize_device(scores.device)
             record["component_latency_s"] = time.perf_counter() - t0
             if scores.shape != (self.num_candidates,):
                 raise RuntimeError(f"Component returned shape {tuple(scores.shape)}")
@@ -68,5 +74,7 @@ class CandidateRerankingActsemble(ReplanningSystemBase):
         except Exception as exc:  # never kill the episode because scoring failed
             record["component_latency_s"] = time.perf_counter() - t0
             record["fallback"] = True
-            record["fallback_reason"] = f"component_exception: {type(exc).__name__}: {exc}"
+            record["fallback_reason"] = (
+                f"component_exception: {type(exc).__name__}: {exc}"
+            )
             return 0

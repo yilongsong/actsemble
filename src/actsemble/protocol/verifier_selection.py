@@ -18,7 +18,7 @@ from pathlib import Path
 import torch
 
 from ..utils.hashing import hash_file
-from ..utils.repo import current_git_commit
+from ..utils.repo import current_git_commit, git_provenance
 from ..utils.serialization import load_json, save_json
 
 # Metrics where LOWER is better; everything else is higher-is-better.
@@ -36,7 +36,9 @@ def select_verifier_record(
     secondary: str = "balanced_accuracy",
 ) -> dict:
     if not offline_history:
-        raise ValueError("Empty offline history; train the verifier with checkpoint_every set")
+        raise ValueError(
+            "Empty offline history; train the verifier with checkpoint_every set"
+        )
     for h in offline_history:
         if primary not in h["metrics"]:
             raise KeyError(f"Primary metric {primary!r} missing at step {h['step']}")
@@ -66,9 +68,11 @@ def select_verifier(
         )
     history = load_json(run_dir / "offline_history.json")
     winner = select_verifier_record(history, primary=primary, secondary=secondary)
-    print(f"[select-verifier] SELECTED step {winner['step']} "
-          f"({primary}={winner['metrics'][primary]:.4f}, evaluated on "
-          f"{winner['evaluated_on']})")
+    print(
+        f"[select-verifier] SELECTED step {winner['step']} "
+        f"({primary}={winner['metrics'][primary]:.4f}, evaluated on "
+        f"{winner['evaluated_on']})"
+    )
 
     ckpt = torch.load(winner["checkpoint_path"], map_location="cpu", weights_only=False)
     train_cfg_path = run_dir / "train_config.json"
@@ -87,6 +91,7 @@ def select_verifier(
         "training_seed": train_config.get("training_seed"),
         "named_generator_seeds": train_config.get("named_generator_seeds"),
         "git_commit": current_git_commit(),
+        "source": git_provenance(),
     }
     torch.save(ckpt, selected_path)
 

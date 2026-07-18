@@ -20,7 +20,6 @@ from .integration import SYSTEM_CFGS
 def run_final_test(
     *,
     seed_dir: str | Path,
-    env=None,  # unused: each system builds its own warmed env (see integration)
     device: str = "cuda",
     regime: dict | None = None,
     force: bool = False,
@@ -61,7 +60,9 @@ def run_final_test(
             system_cfg=sys_cfg,
             eval_cfg=eval_cfg,
             policy_checkpoint=freeze["policy"]["path"],
-            component_checkpoints=[freeze["verifier"]["path"]] if name == "actsemble" else [],
+            component_checkpoints=[freeze["verifier"]["path"]]
+            if name == "actsemble"
+            else [],
             output_path=out_dir / f"eval_{name}.json",
             video_dir=out_dir / "videos",
             device=device,
@@ -76,8 +77,10 @@ def run_final_test(
                 + "\n  - ".join(problems)
             )
         r = results[name]
-        print(f"[final-test] {r['system_name']}: {r['success_count']}/{r['num_episodes']} "
-              f"= {r['success_rate']:.1%}")
+        print(
+            f"[final-test] {r['system_name']}: {r['success_count']}/{r['num_episodes']} "
+            f"= {r['success_rate']:.1%}"
+        )
 
     # Candidate identity + full comparability verification (raises on
     # violation — a candidate mismatch invalidates the paired comparison).

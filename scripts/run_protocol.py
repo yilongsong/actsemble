@@ -65,30 +65,23 @@ def _make_env_from_dataset(dataset_path, render_mode="rgb_array"):
 
 
 def stage_train_policy(spec, sdir, args):
-    from actsemble.protocol.screening import make_screening_callback
-    from actsemble.training.train_diffusion_policy import train_diffusion_policy
+    from actsemble.training.factory import policy_trainer, resolve_policy_family
 
     run_dir = sdir / "policy"
     policy_cfg = resolved_policy_config(spec, args.policy_seed)
-    panels = load_panels(spec.get("panels"))
-    env = _make_env_from_dataset(spec["dataset"], render_mode=None)
-    try:
-        callback = make_screening_callback(
-            run_dir, panels["screening"], env=env, device=_device(args),
-            max_steps=int(spec.get("episode_max_steps", 100)),
-        )
-        summary = train_diffusion_policy(
-            policy_cfg=policy_cfg,
-            dataset_path=spec["dataset"],
-            output_dir=run_dir,
-            device=_device(args),
-            resume=args.resume,
-            on_checkpoint=callback,
-        )
-    finally:
-        env.close()
-    print(f"[protocol] policy training done: {summary['steps']} steps, "
-          f"{len(summary['snapshots'])} snapshots screened")
+    family = resolve_policy_family(policy_cfg)
+    summary = policy_trainer(policy_cfg)(
+        policy_cfg=policy_cfg,
+        dataset_path=spec["dataset"],
+        output_dir=run_dir,
+        device=_device(args),
+        resume=args.resume,
+    )
+    snapshots = list((run_dir / "checkpoints").glob("step_*.pt"))
+    print(
+        f"[protocol] {family} policy training done: {summary['steps']} steps, "
+        f"{len(snapshots)} snapshots saved"
+    )
 
 
 def stage_screen_policy(spec, sdir, args):
@@ -98,7 +91,10 @@ def stage_screen_policy(spec, sdir, args):
     env = _make_env_from_dataset(spec["dataset"], render_mode=None)
     try:
         screen_all_snapshots(
-            sdir / "policy", panels["screening"], env=env, device=_device(args),
+            sdir / "policy",
+            panels["screening"],
+            env=env,
+            device=_device(args),
             max_steps=int(spec.get("episode_max_steps", 100)),
         )
     finally:
@@ -113,7 +109,10 @@ def stage_confirm_policy(spec, sdir, args):
     env = _make_env_from_dataset(spec["dataset"], render_mode=None)
     try:
         confirm_and_select(
-            sdir / "policy", panels["confirmation"], env=env, device=_device(args),
+            sdir / "policy",
+            panels["confirmation"],
+            env=env,
+            device=_device(args),
             max_steps=int(spec.get("episode_max_steps", 100)),
             top_k=int(rule.get("top_k", 5)),
             within_of_best=float(rule.get("within_of_best", 0.10)),
@@ -134,8 +133,10 @@ def stage_train_verifier(spec, sdir, args):
         device=_device(args),
         resume=args.resume,
     )
-    print(f"[protocol] verifier training done: {summary['steps']} steps, "
-          f"{len(summary['snapshots'])} snapshots in offline history")
+    print(
+        f"[protocol] verifier training done: {summary['steps']} steps, "
+        f"{len(summary['snapshots'])} snapshots in offline history"
+    )
 
 
 def stage_select_verifier(spec, sdir, args):
@@ -175,9 +176,13 @@ def stage_integration(spec, sdir, args):
     env = _make_env_from_dataset(spec["dataset"])
     try:
         report = run_integration(
-            seed_dir=sdir, freeze=load_freeze(sdir), panel=panels["integration"],
-            env=env, device=_device(args),
-            max_steps=int(spec.get("episode_max_steps", 100)), force=args.force,
+            seed_dir=sdir,
+            freeze=load_freeze(sdir),
+            panel=panels["integration"],
+            env=env,
+            device=_device(args),
+            max_steps=int(spec.get("episode_max_steps", 100)),
+            force=args.force,
         )
     finally:
         env.close()
@@ -190,17 +195,17 @@ def stage_final_test(spec, sdir, args):
 
     regimes = {r["name"]: r for r in spec.get("final_regimes", [{"name": "nominal"}])}
     if args.regime not in regimes:
-        raise SystemExit(f"Regime {args.regime!r} not declared in the frozen spec "
-                         f"(have {sorted(regimes)}); changing regimes after freezing "
-                         f"requires a new experiment version.")
-    env = _make_env_from_dataset(spec["dataset"])
-    try:
-        run_final_test(
-            seed_dir=sdir, env=env, device=_device(args),
-            regime=regimes[args.regime], force=args.force,
+        raise SystemExit(
+            f"Regime {args.regime!r} not declared in the frozen spec "
+            f"(have {sorted(regimes)}); changing regimes after freezing "
+            f"requires a new experiment version."
         )
-    finally:
-        env.close()
+    run_final_test(
+        seed_dir=sdir,
+        device=_device(args),
+        regime=regimes[args.regime],
+        force=args.force,
+    )
 
 
 def stage_aggregate(spec, experiment_dir, args):
@@ -214,17 +219,32 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("stage", choices=[
-        "init", "train-policy", "screen-policy", "confirm-policy", "train-verifier",
-        "select-verifier", "freeze", "integration", "final-test", "aggregate", "all",
-    ])
+    parser.add_argument(
+        "stage",
+        choices=[
+            "init",
+            "train-policy",
+            "screen-policy",
+            "confirm-policy",
+            "train-verifier",
+            "select-verifier",
+            "freeze",
+            "integration",
+            "final-test",
+            "aggregate",
+            "all",
+        ],
+    )
     parser.add_argument("--experiment-dir", required=True)
     parser.add_argument("--spec", default=None, help="spec YAML (init only)")
     parser.add_argument("--policy-seed", type=int, default=0)
     parser.add_argument("--regime", default="nominal")
     parser.add_argument("--device", default=None)
-    parser.add_argument("--force", action="store_true",
-                        help="explicitly allow overwriting completed artifacts (§17)")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="explicitly allow overwriting completed artifacts (§17)",
+    )
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
 
@@ -259,8 +279,16 @@ def main() -> int:
         "final-test": stage_final_test,
     }
     if args.stage == "all":
-        for name in ["train-policy", "confirm-policy", "train-verifier",
-                     "select-verifier", "freeze", "integration", "final-test"]:
+        for name in [
+            "train-policy",
+            "screen-policy",
+            "confirm-policy",
+            "train-verifier",
+            "select-verifier",
+            "freeze",
+            "integration",
+            "final-test",
+        ]:
             print(f"\n[protocol] ===== stage: {name} (seed {args.policy_seed}) =====")
             stages[name](spec, sdir, args)
         return 0

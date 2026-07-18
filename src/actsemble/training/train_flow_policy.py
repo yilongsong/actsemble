@@ -12,13 +12,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from ..data.normalization import Normalizer, compute_stats
 from ..data.reader import DatasetReader
+from ..data.validation import validate_dataset
 from ..data.torch_dataset import DiffusionWindowDataset
 from ..data.windows import split_episodes
 from ..policies.diffusion.policy import build_model
@@ -26,7 +26,12 @@ from ..policies.flow.policy import FlowMatchingPolicy
 from ..seed import derive_seed, seed_everything, torch_generator
 from ..utils.serialization import save_json
 from .logging import TrainingLogger
-from .train_diffusion_policy import EMA, build_lr_scheduler, make_policy_meta, resolve_total_steps
+from .train_diffusion_policy import (
+    EMA,
+    build_lr_scheduler,
+    make_policy_meta,
+    resolve_total_steps,
+)
 
 
 def named_flow_seeds(seed: int) -> dict[str, int]:
@@ -40,13 +45,21 @@ def named_flow_seeds(seed: int) -> dict[str, int]:
 
 
 def train_flow_policy(
-    *, policy_cfg: dict, dataset_path, output_dir,
-    max_steps: int | None = None, device="cuda" if torch.cuda.is_available() else "cpu",
+    *,
+    policy_cfg: dict,
+    dataset_path,
+    output_dir,
+    max_steps: int | None = None,
+    device="cuda" if torch.cuda.is_available() else "cpu",
     resume: bool = False,
 ) -> dict:
     if resume:
-        raise NotImplementedError("flow policy trains one-shot; retrain at the target budget.")
+        raise NotImplementedError(
+            "flow policy trains one-shot; retrain at the target budget."
+        )
     output_dir = Path(output_dir)
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise FileExistsError(f"Training output directory is not empty: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
     tcfg = policy_cfg.get("training", {})
     seed = int(tcfg.get("seed", 0))
@@ -55,8 +68,12 @@ def train_flow_policy(
     gen_seeds = named_flow_seeds(seed)
 
     reader = DatasetReader(dataset_path)
-    split = split_episodes(reader.episode_ids, val_fraction=float(tcfg.get("val_fraction", 0.1)),
-                           seed=int(tcfg.get("split_seed", 0)))
+    validate_dataset(reader)
+    split = split_episodes(
+        reader.episode_ids,
+        val_fraction=float(tcfg.get("val_fraction", 0.1)),
+        seed=int(tcfg.get("split_seed", 0)),
+    )
     stats = compute_stats(
         reader.episodes,
         method=str(policy_cfg.get("normalization_method", "minmax_to_unit_range")),
@@ -65,37 +82,65 @@ def train_flow_policy(
     meta = make_policy_meta(reader, policy_cfg, split.hash, stats)
 
     ep_by_id = {ep.episode_id: ep for ep in reader.episodes}
-    ds_kwargs = dict(
-        obs_horizon=meta.obs_horizon, prediction_horizon=meta.prediction_horizon,
-        include_previous_action=meta.include_previous_action,
-        alignment=str(policy_cfg.get("action", {}).get("window_alignment", "future_only")),
-        action_horizon=meta.action_horizon,  # reference SequenceSampler terminal range
+    window_alignment = str(
+        policy_cfg.get("action", {}).get("window_alignment", "future_only")
     )
     train_ds = DiffusionWindowDataset(
-        [ep_by_id[i] for i in split.train_episode_ids], normalizer, **ds_kwargs
+        [ep_by_id[i] for i in split.train_episode_ids],
+        normalizer,
+        obs_horizon=meta.obs_horizon,
+        prediction_horizon=meta.prediction_horizon,
+        include_previous_action=meta.include_previous_action,
+        alignment=window_alignment,
+        action_horizon=meta.action_horizon,
     )
     val_eps = [ep_by_id[i] for i in split.val_episode_ids]
-    val_ds = DiffusionWindowDataset(val_eps, normalizer, **ds_kwargs) if val_eps else None
+    val_ds = (
+        DiffusionWindowDataset(
+            val_eps,
+            normalizer,
+            obs_horizon=meta.obs_horizon,
+            prediction_horizon=meta.prediction_horizon,
+            include_previous_action=meta.include_previous_action,
+            alignment=window_alignment,
+            action_horizon=meta.action_horizon,
+        )
+        if val_eps
+        else None
+    )
 
     batch_size = int(tcfg.get("batch_size", 256))
-    loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                        drop_last=len(train_ds) > batch_size, num_workers=0,
-                        generator=torch_generator(gen_seeds["dataloader_order"]))
-    val_loader = (DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
-                  if val_ds is not None and len(val_ds) > 0 else None)
+    loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=len(train_ds) > batch_size,
+        num_workers=0,
+        generator=torch_generator(gen_seeds["dataloader_order"]),
+    )
+    val_loader = (
+        DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
+        if val_ds is not None and len(val_ds) > 0
+        else None
+    )
 
     torch.manual_seed(gen_seeds["flow_init"])
     model = build_model(policy_cfg, meta).to(device)
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=float(tcfg.get("learning_rate", 1e-4)),
+        model.parameters(),
+        lr=float(tcfg.get("learning_rate", 1e-4)),
         weight_decay=float(tcfg.get("weight_decay", 1e-6)),
         betas=tuple(tcfg.get("adam_betas", (0.9, 0.999))),
     )
     ema_cfg = tcfg.get("ema", {})
-    ema = EMA(model, decay=float(tcfg.get("ema_decay", 0.999)), power=ema_cfg.get("power"),
-              inv_gamma=float(ema_cfg.get("inv_gamma", 1.0)),
-              min_value=float(ema_cfg.get("min_value", 0.0)),
-              max_value=float(ema_cfg.get("max_value", 0.9999)))
+    ema = EMA(
+        model,
+        decay=float(tcfg.get("ema_decay", 0.999)),
+        power=ema_cfg.get("power"),
+        inv_gamma=float(ema_cfg.get("inv_gamma", 1.0)),
+        min_value=float(ema_cfg.get("min_value", 0.0)),
+        max_value=float(ema_cfg.get("max_value", 0.9999)),
+    )
     time_scale = float(policy_cfg.get("flow", {}).get("time_scale", 1000.0))
     mask_padding = bool(tcfg.get("mask_padded_actions", False))
     grad_clip = float(tcfg.get("gradient_clip_norm", 1.0))
@@ -110,17 +155,26 @@ def train_flow_policy(
     time_gen = torch_generator(gen_seeds["flow_time"], device)
     logger = TrainingLogger(output_dir)
     save_json(
-        {"policy_config": policy_cfg, "dataset_path": str(dataset_path), "split": split.to_dict(),
-         "dataset_hash": reader.dataset_hash, "split_hash": split.hash,
-         "normalization_hash": stats.hash, "device": str(device), "training_seed": seed,
-         "named_generator_seeds": gen_seeds, "time_scale": time_scale,
-         "steps_per_epoch": steps_per_epoch, "total_steps": total_steps,
-         "early_stopping": "disabled"},
+        {
+            "policy_config": policy_cfg,
+            "dataset_path": str(dataset_path),
+            "split": split.to_dict(),
+            "dataset_hash": reader.dataset_hash,
+            "split_hash": split.hash,
+            "normalization_hash": stats.hash,
+            "device": str(device),
+            "training_seed": seed,
+            "named_generator_seeds": gen_seeds,
+            "time_scale": time_scale,
+            "steps_per_epoch": steps_per_epoch,
+            "total_steps": total_steps,
+            "early_stopping": "disabled",
+        },
         output_dir / "train_config.json",
     )
 
     def flow_loss(m, batch, ngen, tgen):
-        x1 = batch["action_chunk"].to(device)       # [B, H_p, A] normalized (data)
+        x1 = batch["action_chunk"].to(device)  # [B, H_p, A] normalized (data)
         cond = batch["obs_history"].to(device).flatten(1)
         z0 = torch.empty_like(x1).normal_(generator=ngen)
         t = torch.rand(x1.shape[0], device=device, generator=tgen)  # [B] ~ U[0,1]
@@ -139,16 +193,33 @@ def train_flow_policy(
         ema.shadow.to(device).eval()
         ng = torch_generator(gen_seeds["validation"], device)
         tg = torch_generator(gen_seeds["validation"] + 1, device)
+        weighted_loss = 0.0
+        examples = 0
         with torch.no_grad():
-            losses = [flow_loss(ema.shadow, vb, ng, tg).item() for vb in val_loader]
-        return float(np.mean(losses))
+            for vb in val_loader:
+                batch_n = int(vb["action_chunk"].shape[0])
+                weighted_loss += flow_loss(ema.shadow, vb, ng, tg).item() * batch_n
+                examples += batch_n
+        return weighted_loss / examples
 
     def save(path, *, with_train_state):
-        train_state = ({"step": step, "ema_step": ema.step, "optimizer": optimizer.state_dict(),
-                        "best_val": best_val} if with_train_state else None)
+        train_state = (
+            {
+                "step": step,
+                "ema_step": ema.step,
+                "optimizer": optimizer.state_dict(),
+                "best_val": best_val,
+            }
+            if with_train_state
+            else None
+        )
         FlowMatchingPolicy.save_checkpoint(
-            path, config=policy_cfg, meta=meta, model_state=model.state_dict(),
-            ema_state=ema.shadow.state_dict(), train_state=train_state,
+            path,
+            config=policy_cfg,
+            meta=meta,
+            model_state=model.state_dict(),
+            ema_state=ema.shadow.state_dict(),
+            train_state=train_state,
         )
 
     model.train()
@@ -186,8 +257,13 @@ def train_flow_policy(
                 best_val = score
                 save(output_dir / "best_ema.pt", with_train_state=False)
             save(last_path, with_train_state=True)
-        if checkpoint_every and (step % int(checkpoint_every) == 0 or step == total_steps):
-            save(output_dir / "checkpoints" / f"step_{step:06d}.pt", with_train_state=False)
+        if checkpoint_every and (
+            step % int(checkpoint_every) == 0 or step == total_steps
+        ):
+            save(
+                output_dir / "checkpoints" / f"step_{step:06d}.pt",
+                with_train_state=False,
+            )
 
     save(last_path, with_train_state=True)
     save(output_dir / "final.pt", with_train_state=False)
@@ -195,10 +271,18 @@ def train_flow_policy(
         save(output_dir / "best_ema.pt", with_train_state=False)
     logger.close()
     return {
-        "steps": step, "steps_per_epoch": steps_per_epoch, "final_train_loss": final_loss,
+        "steps": step,
+        "steps_per_epoch": steps_per_epoch,
+        "final_train_loss": final_loss,
         "best_val_loss": None if best_val == float("inf") else best_val,
-        "checkpoints": {"best_ema": str(output_dir / "best_ema.pt"),
-                        "final": str(output_dir / "final.pt"), "last": str(last_path)},
-        "dataset_hash": reader.dataset_hash, "split_hash": split.hash,
-        "normalization_hash": stats.hash, "training_seed": seed, "named_generator_seeds": gen_seeds,
+        "checkpoints": {
+            "best_ema": str(output_dir / "best_ema.pt"),
+            "final": str(output_dir / "final.pt"),
+            "last": str(last_path),
+        },
+        "dataset_hash": reader.dataset_hash,
+        "split_hash": split.hash,
+        "normalization_hash": stats.hash,
+        "training_seed": seed,
+        "named_generator_seeds": gen_seeds,
     }

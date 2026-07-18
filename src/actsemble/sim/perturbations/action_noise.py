@@ -12,7 +12,9 @@ from .base import NoOpPerturbation
 class ActionNoisePerturbation(NoOpPerturbation):
     name = "action_noise"
 
-    def __init__(self, *, scale: float = 0.1, distribution: str = "gaussian", seed: int = 0):
+    def __init__(
+        self, *, scale: float = 0.1, distribution: str = "gaussian", seed: int = 0
+    ):
         if distribution not in ("gaussian", "uniform"):
             raise ValueError(f"Unknown distribution {distribution}")
         self.scale = float(scale)
@@ -21,7 +23,9 @@ class ActionNoisePerturbation(NoOpPerturbation):
         self._rng = np.random.default_rng(0)
 
     def reset(self, *, episode_seed: int) -> None:
-        self._rng = np.random.default_rng(derive_seed(self.seed, self.name, episode_seed))
+        self._rng = np.random.default_rng(
+            derive_seed(self.seed, self.name, episode_seed)
+        )
 
     def modify_action(self, action: RobotAction, step_index: int) -> RobotAction:
         value = np.asarray(action.value, dtype=np.float32)

@@ -109,19 +109,25 @@ class NegativeGenerator:
         action_high: np.ndarray,
         prediction_horizon: int,
         obs_horizon: int,
+        alignment: str = "future_only",
     ):
         self.cfg = cfg
         self.action_low = np.asarray(action_low, dtype=np.float32)
         self.action_high = np.asarray(action_high, dtype=np.float32)
         self.h_p = int(prediction_horizon)
         self.h_o = int(obs_horizon)
+        self.alignment = str(alignment)
 
     def _clip(self, chunk: np.ndarray) -> np.ndarray:
         return np.clip(chunk, self.action_low, self.action_high).astype(np.float32)
 
     def _chunk_at(self, episodes: list[EpisodeRecord], ei: int, t: int) -> np.ndarray:
         w = extract_window(
-            episodes[ei], t, obs_horizon=self.h_o, prediction_horizon=self.h_p
+            episodes[ei],
+            t,
+            obs_horizon=self.h_o,
+            prediction_horizon=self.h_p,
+            alignment=self.alignment,
         )
         return w.action_chunk
 
@@ -135,9 +141,10 @@ class NegativeGenerator:
         *,
         negative_type: str | None = None,
     ) -> tuple[np.ndarray, str]:
-        ntype = negative_type or self.cfg.enabled_types[
-            int(rng.integers(len(self.cfg.enabled_types)))
-        ]
+        ntype = (
+            negative_type
+            or self.cfg.enabled_types[int(rng.integers(len(self.cfg.enabled_types)))]
+        )
         neg = getattr(self, f"_neg_{ntype}")(episodes, ei, t, chunk.copy(), rng)
         return self._clip(neg), ntype
 
@@ -165,7 +172,9 @@ class NegativeGenerator:
     def _neg_rotation_perturbation(self, episodes, ei, t, chunk, rng):
         dims = self.cfg.rotation_dims
         offset = rng.uniform(
-            -self.cfg.rotation_offset_scale, self.cfg.rotation_offset_scale, size=len(dims)
+            -self.cfg.rotation_offset_scale,
+            self.cfg.rotation_offset_scale,
+            size=len(dims),
         ).astype(np.float32)
         chunk[:, dims] = chunk[:, dims] + offset
         return chunk
@@ -174,7 +183,9 @@ class NegativeGenerator:
         T = len(episodes[ei])
         lo, hi = self.cfg.temporal_shift_min, self.cfg.temporal_shift_max
         offsets = [
-            d for d in list(range(-hi, -lo + 1)) + list(range(lo, hi + 1)) if 0 <= t + d < T
+            d
+            for d in list(range(-hi, -lo + 1)) + list(range(lo, hi + 1))
+            if 0 <= t + d < T
         ]
         if not offsets:
             return self._neg_additive_noise(episodes, ei, t, chunk, rng)
@@ -239,7 +250,9 @@ def _non_identity_permutation(n: int, rng: np.random.Generator) -> np.ndarray:
             return perm
 
 
-def window_negative_rng(seed: int, episode_id: str, t: int, replica: int) -> np.random.Generator:
+def window_negative_rng(
+    seed: int, episode_id: str, t: int, replica: int
+) -> np.random.Generator:
     """The canonical deterministic RNG for a window's negative sample."""
     return np.random.default_rng(derive_seed(seed, "negative", episode_id, t, replica))
 
@@ -247,7 +260,12 @@ def window_negative_rng(seed: int, episode_id: str, t: int, replica: int) -> np.
 class CompatibilityMLP(nn.Module):
     """MLP over [flattened normalized obs history ++ flattened normalized chunk]."""
 
-    def __init__(self, input_dim: int, hidden: tuple[int, ...] = (512, 512, 256), dropout: float = 0.1):
+    def __init__(
+        self,
+        input_dim: int,
+        hidden: tuple[int, ...] = (512, 512, 256),
+        dropout: float = 0.1,
+    ):
         super().__init__()
         layers: list[nn.Module] = []
         d = input_dim
@@ -306,7 +324,9 @@ class ActionChunkCompatibility:
         sd = int(self.meta["state_dim"])
         state_norm = self.normalizer.normalize_state(obs[:, :sd])
         obs_norm = (
-            torch.cat([state_norm, self.normalizer.normalize_action(obs[:, sd:])], dim=1)
+            torch.cat(
+                [state_norm, self.normalizer.normalize_action(obs[:, sd:])], dim=1
+            )
             if self.meta.get("include_previous_action", False)
             else state_norm
         )
@@ -319,7 +339,9 @@ class ActionChunkCompatibility:
 
     # -- persistence ---------------------------------------------------------
     @staticmethod
-    def save_checkpoint(path: str | Path, *, config: dict, meta: dict, model_state: dict) -> None:
+    def save_checkpoint(
+        path: str | Path, *, config: dict, meta: dict, model_state: dict
+    ) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(
@@ -345,9 +367,9 @@ class ActionChunkCompatibility:
         feat = int(meta["state_dim"]) + (
             int(meta["action_dim"]) if meta.get("include_previous_action") else 0
         )
-        input_dim = int(meta["obs_horizon"]) * feat + int(meta["prediction_horizon"]) * int(
-            meta["action_dim"]
-        )
+        input_dim = int(meta["obs_horizon"]) * feat + int(
+            meta["prediction_horizon"]
+        ) * int(meta["action_dim"])
         model = CompatibilityMLP(
             input_dim,
             hidden=tuple(model_cfg.get("hidden", [512, 512, 256])),

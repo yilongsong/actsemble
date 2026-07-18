@@ -48,9 +48,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, help="data config YAML")
     parser.add_argument("--output", required=True, help="output dataset .h5 path")
-    parser.add_argument("--subset-size", type=int, default=None,
-                        help="deterministic nested subset size (protocol §7); "
-                             "overrides the config value")
+    parser.add_argument(
+        "--subset-size",
+        type=int,
+        default=None,
+        help="deterministic nested subset size (protocol §7); "
+        "overrides the config value",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -58,7 +62,9 @@ def main() -> int:
     control_mode = cfg["control_mode"]
     sim_backend = cfg["sim_backend"]
     max_episodes = cfg.get("max_episodes")
-    subset_size = args.subset_size if args.subset_size is not None else cfg.get("subset_size")
+    subset_size = (
+        args.subset_size if args.subset_size is not None else cfg.get("subset_size")
+    )
     subset_seed = int(cfg.get("subset_seed", 0))
 
     traj_path = cfg.get("trajectory_path") or default_bundle_path(
@@ -66,8 +72,10 @@ def main() -> int:
     )
     print(f"[prepare] source bundle: {traj_path}")
     source = ManiSkillTrajectorySource(
-        traj_path, max_episodes=max_episodes,
-        subset_size=subset_size, subset_seed=subset_seed,
+        traj_path,
+        max_episodes=max_episodes,
+        subset_size=subset_size,
+        subset_seed=subset_seed,
     )
     if subset_size is not None:
         print(f"[prepare] nested subset: size={subset_size} seed={subset_seed}")
@@ -94,7 +102,9 @@ def main() -> int:
     layout_env.close()
     print(f"[prepare] state layout: {state_layout}")
 
-    print(f"[prepare] converting up to {max_episodes or 'all'} episodes via state projection...")
+    print(
+        f"[prepare] converting up to {max_episodes or 'all'} episodes via state projection..."
+    )
     episodes, provenance = convert_demonstrations(source, env)
     if not episodes:
         print("[prepare] ERROR: no successful episodes exported", file=sys.stderr)
@@ -119,9 +129,14 @@ def main() -> int:
                     "normalized end-effector delta pose: xyz translation then "
                     "axis-angle rotation, scaled by the controller",
                 ),
-                "frame": cfg.get("action_frame", "root_translation:root_aligned_body_rotation"),
+                "frame": cfg.get(
+                    "action_frame", "root_translation:root_aligned_body_rotation"
+                ),
                 "units": "normalized [-1, 1] per dimension",
-                "bounds": [contract["action_low"].tolist(), contract["action_high"].tolist()],
+                "bounds": [
+                    contract["action_low"].tolist(),
+                    contract["action_high"].tolist(),
+                ],
                 "scaling": "controller clip_and_scale from [-1,1] to physical deltas",
                 "clipping_rules": "recorded RL actions clipped to bounds at export "
                 "(controller clips identically at execution)",
@@ -153,16 +168,20 @@ def main() -> int:
     print(f"[prepare] wrote {len(episodes)} episodes -> {args.output}")
     print(f"[prepare] dataset_hash: {dataset_hash}")
     print(f"[prepare] provenance sidecar: {sidecar}")
-    print(f"[prepare] rejected: {provenance['rejected_count']}, "
-          f"conversion failures: {provenance['conversion_failure_count']}")
+    print(
+        f"[prepare] rejected: {provenance['rejected_count']}, "
+        f"conversion failures: {provenance['conversion_failure_count']}"
+    )
 
     print("[prepare] validating...")
     reader = DatasetReader(args.output)
     summary = validate_dataset(reader)
     validate_success_only_provenance(args.output)
-    print(f"[prepare] validation OK: {summary['num_episodes']} episodes, "
-          f"{summary['num_transitions']} transitions, "
-          f"state_dim={summary['state_dim']}, action_dim={summary['action_dim']}")
+    print(
+        f"[prepare] validation OK: {summary['num_episodes']} episodes, "
+        f"{summary['num_transitions']} transitions, "
+        f"state_dim={summary['state_dim']}, action_dim={summary['action_dim']}"
+    )
     return 0
 
 

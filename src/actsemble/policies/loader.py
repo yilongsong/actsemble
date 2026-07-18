@@ -32,4 +32,6 @@ def load_policy(checkpoint: str | Path, *, device="cpu", use_ema: bool = True):
     import importlib
 
     cls = getattr(importlib.import_module(module_name), cls_name)
-    return cls.from_checkpoint(checkpoint, device=device, use_ema=use_ema)
+    return cls.from_checkpoint(
+        checkpoint, device=device, use_ema=use_ema, _checkpoint_payload=ckpt
+    )

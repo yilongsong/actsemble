@@ -58,13 +58,22 @@ class ResNet18(nn.Module):
         self.layer3 = self._layer(128, 256, 2, 2)
         self.layer4 = self._layer(256, 512, 2, 2)
         self.out_channels = 512
+        for module in self.modules():
+            if isinstance(module, nn.Conv2d):
+                nn.init.kaiming_normal_(
+                    module.weight, mode="fan_out", nonlinearity="relu"
+                )
+            elif isinstance(module, (nn.BatchNorm2d, nn.GroupNorm)):
+                nn.init.ones_(module.weight)
+                nn.init.zeros_(module.bias)
 
     @staticmethod
     def _layer(in_ch, out_ch, blocks, stride):
         downsample = None
         if stride != 1 or in_ch != out_ch:
             downsample = nn.Sequential(
-                nn.Conv2d(in_ch, out_ch, 1, stride=stride, bias=False), nn.BatchNorm2d(out_ch)
+                nn.Conv2d(in_ch, out_ch, 1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_ch),
             )
         layers = [BasicBlock(in_ch, out_ch, stride, downsample)]
         layers += [BasicBlock(out_ch, out_ch) for _ in range(1, blocks)]
@@ -80,7 +89,9 @@ class SpatialSoftmax(nn.Module):
 
     def __init__(self, channels: int, num_kp: int = 32):
         super().__init__()
-        self.proj = nn.Conv2d(channels, num_kp, 1) if num_kp != channels else nn.Identity()
+        self.proj = (
+            nn.Conv2d(channels, num_kp, 1) if num_kp != channels else nn.Identity()
+        )
         self.num_kp = num_kp
 
     def forward(self, feat: torch.Tensor) -> torch.Tensor:
@@ -88,8 +99,8 @@ class SpatialSoftmax(nn.Module):
         z = self.proj(feat).reshape(b, self.num_kp, h * w)
         attn = F.softmax(z, dim=-1)
         ys, xs = torch.meshgrid(
-            torch.linspace(-1, 1, h, device=feat.device),
-            torch.linspace(-1, 1, w, device=feat.device),
+            torch.linspace(-1, 1, h, device=feat.device, dtype=feat.dtype),
+            torch.linspace(-1, 1, w, device=feat.device, dtype=feat.dtype),
             indexing="ij",
         )
         grid = torch.stack([xs.reshape(-1), ys.reshape(-1)], dim=0)  # [2, h*w]
@@ -109,11 +120,22 @@ class ImageObsEncoder(nn.Module):
         self.feature_dim = num_kp * 2 + int(proprio_dim)
         self.proprio_dim = int(proprio_dim)
 
-    def forward(self, images: torch.Tensor, proprio: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self, images: torch.Tensor, proprio: torch.Tensor | None = None
+    ) -> torch.Tensor:
         """images [B, H_o, C, H, W] (+ proprio [B, H_o, proprio_dim]) -> [B, H_o*feature_dim]."""
         b, ho = images.shape[:2]
-        feat = self.pool(self.backbone(images.flatten(0, 1))).reshape(b, ho, -1)  # [B,H_o,num_kp*2]
-        if self.proprio_dim and proprio is not None:
+        feat = self.pool(self.backbone(images.flatten(0, 1))).reshape(
+            b, ho, -1
+        )  # [B,H_o,num_kp*2]
+        if self.proprio_dim and proprio is None:
+            raise ValueError(f"proprio is required when proprio_dim={self.proprio_dim}")
+        if proprio is not None:
+            expected = (b, ho, self.proprio_dim)
+            if tuple(proprio.shape) != expected:
+                raise ValueError(
+                    f"proprio shape {tuple(proprio.shape)} != expected {expected}"
+                )
             feat = torch.cat([feat, proprio], dim=-1)
         return feat.reshape(b, -1)
 

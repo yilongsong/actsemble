@@ -7,8 +7,16 @@ import math
 import numpy as np
 
 
-def wilson_interval(successes: int, total: int, *, z: float = 1.96) -> tuple[float, float]:
+def wilson_interval(
+    successes: int, total: int, *, z: float = 1.96
+) -> tuple[float, float]:
     """Wilson score interval for a binomial proportion."""
+    if total < 0 or successes < 0 or successes > total:
+        raise ValueError(
+            f"invalid binomial counts: successes={successes}, total={total}"
+        )
+    if z <= 0:
+        raise ValueError(f"z must be positive, got {z}")
     if total == 0:
         return (0.0, 1.0)
     p = successes / total
@@ -34,6 +42,10 @@ def paired_bootstrap_diff(
     n = len(a)
     if n == 0:
         raise ValueError("no episodes")
+    if num_resamples < 1:
+        raise ValueError("num_resamples must be >= 1")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must be in (0, 1)")
     rng = np.random.default_rng(seed)
     idx = rng.integers(0, n, size=(num_resamples, n))
     diffs = a[idx].mean(axis=1) - b[idx].mean(axis=1)
@@ -52,6 +64,8 @@ def paired_outcome_counts(successes_a: list[bool], successes_b: list[bool]) -> d
     """Per-seed win/loss/tie counts for system a versus system b."""
     a = np.asarray(successes_a, dtype=bool)
     b = np.asarray(successes_b, dtype=bool)
+    if a.shape != b.shape or a.ndim != 1:
+        raise ValueError("paired outcome counts need equal-length 1D outcome lists")
     return {
         "a_wins": int(np.sum(a & ~b)),
         "b_wins": int(np.sum(~a & b)),

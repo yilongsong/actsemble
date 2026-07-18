@@ -26,8 +26,12 @@ def cosine_beta_schedule(num_steps: int, s: float = 0.008) -> torch.Tensor:
 
 
 class DiffusionScheduler:
-    def __init__(self, num_train_steps: int = 100, schedule: str = "cosine",
-                 timestep_spacing: str = "leading"):
+    def __init__(
+        self,
+        num_train_steps: int = 100,
+        schedule: str = "cosine",
+        timestep_spacing: str = "leading",
+    ):
         self.num_train_steps = int(num_train_steps)
         if schedule == "cosine":
             betas = cosine_beta_schedule(self.num_train_steps)

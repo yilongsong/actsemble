@@ -48,8 +48,11 @@ def render_videos(reader: DatasetReader, video_dir: Path, num_videos: int) -> No
     )
     verify_env_matches(
         env,
-        {"task_id": meta.task_id, "controller": meta.controller,
-         "simulation_backend": meta.simulation_backend},
+        {
+            "task_id": meta.task_id,
+            "controller": meta.controller,
+            "simulation_backend": meta.simulation_backend,
+        },
         what="dataset video rendering",
     )
     u = env.unwrapped
@@ -100,20 +103,26 @@ def main() -> int:
     print(f"control frequency:    {meta.control_frequency} Hz")
     print(f"episodes:             {summary['num_episodes']}")
     print(f"transitions:          {summary['num_transitions']}")
-    print(f"episode length:       min {min(lengths)}, max {max(lengths)}, "
-          f"mean {np.mean(lengths):.1f}, median {np.median(lengths):.0f}")
+    print(
+        f"episode length:       min {min(lengths)}, max {max(lengths)}, "
+        f"mean {np.mean(lengths):.1f}, median {np.median(lengths):.0f}"
+    )
     print(f"state dim:            {summary['state_dim']}")
     print(f"action dim:           {summary['action_dim']}")
     print(f"state layout:         {meta.state_layout}")
     state_min = np.asarray(summary["state_min"])
     state_max = np.asarray(summary["state_max"])
     print(f"state range:          [{state_min.min():.3f}, {state_max.max():.3f}]")
-    print(f"action range:         [{min(summary['action_min']):.3f}, "
-          f"{max(summary['action_max']):.3f}]")
+    print(
+        f"action range:         [{min(summary['action_min']):.3f}, "
+        f"{max(summary['action_max']):.3f}]"
+    )
     print(f"dataset hash:         {summary['dataset_hash']}")
-    print(f"success-only:         VERIFIED ({len(provenance['exported_episodes'])} exported, "
-          f"{provenance['rejected_count']} rejected, "
-          f"{provenance['conversion_failure_count']} conversion failures)")
+    print(
+        f"success-only:         VERIFIED ({len(provenance['exported_episodes'])} exported, "
+        f"{provenance['rejected_count']} rejected, "
+        f"{provenance['conversion_failure_count']} conversion failures)"
+    )
     action_def = json.loads(meta.action_definition)
     print(f"action bounds:        {action_def.get('bounds')}")
     print("validation:           PASSED")
