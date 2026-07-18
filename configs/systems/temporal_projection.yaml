@@ -1,0 +1,21 @@
+name: temporal_projection
+
+# A4 temporal ensembling, multimodal-safe emission: compute the temporally-
+# weighted mean, then PROJECT it onto the nearest real overlapping prediction.
+# Always emits an action the policy actually produced (never a blend of two
+# modes), while still following the ensemble's centre of mass.
+policy:
+  type: state_diffusion
+  checkpoint: null        # supplied via --policy-checkpoint
+  frozen: true
+  num_candidates: 1
+
+components: []
+
+selection:
+  type: temporal_ensemble
+  aggregation: projection
+  decay: 0.1
+
+execution:
+  replan_interval: 1

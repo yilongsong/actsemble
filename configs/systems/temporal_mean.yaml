@@ -1,0 +1,21 @@
+name: temporal_mean
+
+# A4 temporal ensembling, classic ACT emission: temporally-weighted AVERAGE of
+# all overlapping predictions for the current step (w(a) = exp(-decay * age)).
+# Averages continuous actions — smooths under unimodal predictions, unsafe
+# across distinct action modes (see temporal_projection / temporal_medoid).
+policy:
+  type: state_diffusion
+  checkpoint: null        # supplied via --policy-checkpoint
+  frozen: true
+  num_candidates: 1
+
+components: []
+
+selection:
+  type: temporal_ensemble
+  aggregation: mean
+  decay: 0.1              # EWMA rate in prediction age; 0 = uniform average
+
+execution:
+  replan_interval: 1

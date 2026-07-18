@@ -1,0 +1,40 @@
+name: state_act_policy
+
+# ACT (action chunking with transformers), state-based. Same observation/action
+# horizons + the SAME frozen dataset/normalization as state_diffusion, so ACT vs
+# diffusion is a fair architecture comparison. Inference is z=0 (deterministic).
+observation:
+  mode: state
+  history: 2
+  include_previous_action: false
+
+action:
+  prediction_horizon: 16
+  execution_horizon: 8
+
+model:
+  type: act
+  hidden_dim: 256
+  latent_dim: 32
+  n_heads: 8
+  n_encoder_layers: 4
+  n_decoder_layers: 4
+  dim_feedforward: 512
+  dropout: 0.1
+
+act:
+  kl_weight: 10.0        # weight on KL(z || N(0,I)); ACT default
+
+training:
+  seed: 0
+  batch_size: 256
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  ema_decay: 0.999
+  gradient_clip_norm: 1.0
+  val_fraction: 0.1
+  split_seed: 0
+  mask_padded_actions: true   # canonical ACT: exclude replicated terminal padding
+  max_steps: 30000
+  log_every: 50
+  eval_every: 1000

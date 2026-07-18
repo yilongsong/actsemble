@@ -13,11 +13,12 @@ from .consensus_selection import SELECTOR_TYPES, ConsensusSelectionSystem, build
 from .interface import ReplanningSystemBase, check_same_data
 from .multisample_control import MultiSampleControlSystem
 from .standalone import StandaloneDiffusionSystem
+from .temporal_ensemble import TemporalEnsembleSystem
 from .verifier_ensemble import MeanScoreRerankingActsemble
 
 SYSTEM_TYPES = (
     "candidate_zero", "uniform_random", "first_candidate", "highest_component_score",
-    "mean_component_score", *SELECTOR_TYPES,
+    "mean_component_score", "temporal_ensemble", *SELECTOR_TYPES,
 )
 
 
@@ -49,6 +50,25 @@ def build_system(
         return StandaloneDiffusionSystem(
             policy,
             num_candidates=num_candidates,
+            action_horizon=action_horizon,
+            candidate_root_seed=candidate_root_seed,
+        )
+    if sel_type == "temporal_ensemble":
+        # A4 temporal-execution variant: replans at a cadence into a control-time
+        # cache, emits an aggregate of the overlapping predictions. Selection over
+        # the shared candidate tensor (K defaults to 1 = candidate zero); no
+        # components. Aggregation/decay/window are the emission knobs.
+        if components:
+            raise ValueError("temporal_ensemble takes no components")
+        execution = system_cfg.get("execution", {})
+        return TemporalEnsembleSystem(
+            policy,
+            num_candidates=num_candidates,
+            aggregation=str(selection.get("aggregation", "mean")),
+            decay=float(selection.get("decay", 0.1)),
+            recency=str(selection.get("recency", "recent")),
+            window=selection.get("window"),
+            replan_interval=int(execution.get("replan_interval", 1)),
             action_horizon=action_horizon,
             candidate_root_seed=candidate_root_seed,
         )

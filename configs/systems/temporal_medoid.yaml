@@ -1,0 +1,20 @@
+name: temporal_medoid
+
+# A4 temporal ensembling, multimodal-safe emission: the temporally-weighted
+# MEDOID of the overlapping predictions (the one minimizing sum_j w_j ||P_i-P_j||).
+# No averaging — robust to a single outlier chunk, emits a real predicted action.
+policy:
+  type: state_diffusion
+  checkpoint: null        # supplied via --policy-checkpoint
+  frozen: true
+  num_candidates: 1
+
+components: []
+
+selection:
+  type: temporal_ensemble
+  aggregation: medoid
+  decay: 0.1
+
+execution:
+  replan_interval: 1

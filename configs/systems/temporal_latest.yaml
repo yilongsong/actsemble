@@ -1,0 +1,20 @@
+name: temporal_latest
+
+# A4 compute-matched control: replan every control step, execute the freshest
+# prediction only (no ensembling). Isolates dense replanning / short effective
+# horizon from the temporal aggregation. Shares the exact cached plans of the
+# temporal_{mean,projection,medoid} systems (K=1) — differs ONLY in emission.
+policy:
+  type: state_diffusion
+  checkpoint: null        # supplied via --policy-checkpoint
+  frozen: true
+  num_candidates: 1
+
+components: []
+
+selection:
+  type: temporal_ensemble
+  aggregation: latest
+
+execution:
+  replan_interval: 1

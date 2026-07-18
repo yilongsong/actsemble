@@ -168,13 +168,15 @@ class ReplanningSystemBase:
             components=self.components(),
         )
 
-    def _replan(self) -> None:
-        # Base-pipeline stages (docs/system_architecture.md §2): Propose ->
-        # Predict -> Score -> Select -> Schedule. Subclasses override any seam;
-        # the defaults reproduce candidate-zero. §11 candidate identity lives in
-        # Propose, so any Score/Select swap keeps the K-tensor bitwise-identical.
-        ctx = self._context()
-        record: dict = {"replan_index": self._replan_index, "episode_seed": self.episode_seed}
+    def _decide(self, ctx: DecisionContext, record: dict) -> tuple[torch.Tensor, int, int]:
+        """Run the base-pipeline decision stages for one replan: Propose ->
+        Predict -> Score -> Select -> Schedule. Records the §11 candidate hash
+        and the selected index into ``record`` and appends it to
+        ``_replan_records``. Returns ``(candidates, selected_index,
+        action_horizon)`` and does NOT touch execution state (queue / cache /
+        executed actions) — the caller commits the decision. Shared by the
+        receding-horizon base (``_replan``, a one-chunk queue) and the
+        temporal-execution variant (a control-time cache; §2.3)."""
         candidates = self._propose(ctx, record)
         valid = torch.isfinite(candidates).all(dim=(1, 2))
         record["num_valid_candidates"] = int(valid.sum())
@@ -184,6 +186,18 @@ class ReplanningSystemBase:
         record["selected_index"] = selected
         self._replan_records.append(record)
         h_a = int(self._schedule(candidates, selected, ctx))
+        return candidates, selected, h_a
+
+    def _replan(self) -> None:
+        # Base-pipeline stages (docs/system_architecture.md §2): Propose ->
+        # Predict -> Score -> Select -> Schedule, then commit H_a actions to the
+        # one-chunk execution queue. Subclasses override any seam (defaults
+        # reproduce candidate-zero); §11 candidate identity lives in Propose, so
+        # any Score/Select swap keeps the K-tensor bitwise-identical. The
+        # temporal variant reuses ``_decide`` with a control-time cache (§2.3).
+        ctx = self._context()
+        record: dict = {"replan_index": self._replan_index, "episode_seed": self.episode_seed}
+        candidates, selected, h_a = self._decide(ctx, record)
         chunk = candidates[selected].detach().cpu().numpy().astype(np.float32)
         for a in chunk[:h_a]:
             self._queue.append(a.copy())

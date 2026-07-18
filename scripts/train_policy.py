@@ -1,9 +1,15 @@
 #!/usr/bin/env python
-"""Train the state-conditioned diffusion policy on a frozen dataset.
+"""Train a state-conditioned action-chunk policy on a frozen dataset.
+
+Dispatches on ``model.type`` in the config: ``conditional_unet_1d`` -> diffusion
+policy, ``act`` -> ACT (CVAE). Both produce interchangeable ActionChunkPolicy
+checkpoints.
 
 Usage:
     python scripts/train_policy.py --config configs/policies/state_diffusion.yaml \
         --dataset data/push_t_smoke.h5 --max-steps 200 --output-dir outputs/policy_smoke
+    python scripts/train_policy.py --config configs/policies/state_act.yaml \
+        --dataset data/active_min/subset_0400.h5 --output-dir outputs/active_min/act_seed_0
 """
 
 from __future__ import annotations
@@ -15,7 +21,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from actsemble.config import load_config
+from actsemble.training.train_act_policy import train_act_policy
 from actsemble.training.train_diffusion_policy import train_diffusion_policy
+
+TRAINERS = {"conditional_unet_1d": train_diffusion_policy, "act": train_act_policy}
 
 
 def main() -> int:
@@ -30,9 +39,13 @@ def main() -> int:
 
     import torch
 
+    cfg = load_config(args.config)
+    model_type = cfg.get("model", {}).get("type", "conditional_unet_1d")
+    if model_type not in TRAINERS:
+        raise ValueError(f"Unknown model.type {model_type!r}; expected one of {list(TRAINERS)}")
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    summary = train_diffusion_policy(
-        policy_cfg=load_config(args.config),
+    summary = TRAINERS[model_type](
+        policy_cfg=cfg,
         dataset_path=args.dataset,
         output_dir=args.output_dir,
         max_steps=args.max_steps,

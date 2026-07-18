@@ -68,8 +68,11 @@ class ReplanningSystemBase(AutonomySystem):          # the base pipeline
         self._enqueue(cands[sel][:h_a])
 ```
 
-Today the pipeline emits from a one-chunk execution queue (`_queue`); the
-control-time cache (§2.3) is the drop-in generalization added when A4/D arrive.
+The base pipeline emits from a one-chunk execution queue (`_queue`); the
+control-time cache (§2.3) is its generalization, **now realized** by the
+temporal-execution variant (A4, `systems/temporal_ensemble.py`), which shares
+the decision stages through `_decide` (Propose→…→Schedule) and swaps only the
+execution/emission model.
 
 ### 2.1 The stages
 
@@ -108,16 +111,23 @@ every seam — which is what A5 (executed actions, policy handle) and C5
 
 Ordinary receding-horizon execution — *sample a chunk, execute `H_a`, discard,
 replan* — is the **degenerate case** of a control-time-indexed cache that holds
-one chunk and drains it `H_a` at a time. Today the pipeline holds exactly that
-one-chunk queue; A4/D generalize it to a cache that **retains overlapping
-predictions** — the Schedule sets the propose cadence, and emission returns the
-action for the current control-time from whatever the cache holds.
-Temporal ensembling (A4) and temporal selection / chunk-switching (Track D) are
-exactly *a propose-cadence + an emission rule over this cache* — one policy, one
-chain, action out of this chain → **Tier 1**. The emitted action may be a
-combined (non-candidate) action; that is still Tier 1 (prefer *projecting onto a
-real candidate* for multimodal safety, but that is a strategy choice, not a tier
-boundary).
+one chunk and drains it `H_a` at a time. The base pipeline holds exactly that
+one-chunk queue; **A4 (`TemporalEnsembleSystem`) realizes the general cache** — a
+propose cadence (`replan_interval`) fills a control-time-indexed cache that
+**retains overlapping predictions**, and the emission rule returns the action for
+the current control-time from whatever the cache holds. Temporal ensembling (A4)
+and temporal selection / chunk-switching (Track D, still future) are exactly *a
+propose-cadence + an emission rule over this cache* — one policy, one chain,
+action out of this chain → **Tier 1**. The emitted action may be a combined
+(non-candidate) action; that is still Tier 1 — A4 offers `mean` (the classic ACT
+average) plus the multimodal-safe `projection` (snap the weighted mean onto a
+real prediction) and `medoid` rules, with `latest` (no ensembling) as the
+compute-matched control. A note on fairness: because A4 changes the *propose
+cadence* (it replans every step), it is **budget-matched** against the
+receding-horizon baseline (§2.5), not candidate-identity-matched; the exact
+same-plan property holds only *open-loop* (fixed observation) — in closed loop
+the aggregation variants legitimately diverge as soon as their emitted actions
+differ.
 
 ### 2.4 The Tier-1 contract — candidate identity (§11)
 
@@ -268,9 +278,14 @@ change a *knob*, Tier 2 when they change the *action source*.
 - **C5 dynamics uncertainty** → override **`_predict`** (a `StateDynamicsModel`
   component + an M-ensemble) and **`_score`**
   (`λ_p·progress − λ_s·support − λ_u·uncertainty`).
-- **A4 temporal ensembling** → override **`_schedule`** (propose cadence) and
-  **`_select`**, backed by the cache generalization of `_queue`.
+- **A4 temporal ensembling** → **DONE** (`systems/temporal_ensemble.py`): a
+  temporal-execution variant that reuses `_decide` and replaces the queue with a
+  control-time cache + an aggregation emission (`latest` / `mean` / `projection`
+  / `medoid`), a propose cadence (`replan_interval`), and an EWMA age weight.
+  Configs `configs/systems/temporal_*.yaml`; runner `scripts/compare_temporal.py`.
 
-Each ships as a config against the same base pipeline, keeps candidate identity,
-and is compared paired against candidate_zero / verifier / medoid / oracle on the
-`diagnostic` panel — one knob at a time.
+A5 / C5 ship as a config against the same base pipeline, keep candidate identity,
+and are compared paired against candidate_zero / verifier / medoid / oracle on the
+`diagnostic` panel — one knob at a time. A4 differs (a propose-cadence change), so
+it is **budget-matched** against the receding-horizon baseline and additionally
+**compute-matched** against `temporal_latest` to isolate the aggregation rule.

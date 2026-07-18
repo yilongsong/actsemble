@@ -25,7 +25,7 @@ import numpy as np
 import mani_skill
 
 from ..components.action_chunk_compatibility import ActionChunkCompatibility
-from ..policies.diffusion.policy import DiffusionPolicy
+from ..policies.loader import load_policy
 from ..sim.env_factory import make_env, verify_env_matches
 from ..sim.perturbations.base import build_perturbations
 from ..sim.rollout import run_episode
@@ -148,7 +148,7 @@ def evaluate_system(
             f"or write into a new experiment-version directory."
         )
     component_checkpoints = component_checkpoints or []
-    policy = DiffusionPolicy.from_checkpoint(policy_checkpoint, device=device, use_ema=use_ema)
+    policy = load_policy(policy_checkpoint, device=device, use_ema=use_ema)
     components = [
         ActionChunkCompatibility.from_checkpoint(p, device=device)
         for p in component_checkpoints
