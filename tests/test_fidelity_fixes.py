@@ -197,6 +197,72 @@ def test_euler_sample_rejects_zero_steps():
                      action_dim=2, num_steps=0)
 
 
+def test_ddpm_step_is_canonical_posterior_not_ddim_eta1():
+    from actsemble.policies.diffusion.scheduler import DiffusionScheduler
+    s = DiffusionScheduler(num_train_steps=100)
+    tau, tau_prev = 60, 54
+    torch.manual_seed(0)
+    x = 0.02 * torch.randn(2, 4, 2)   # small enough that predicted x0 stays in [-1,1]
+    eps = 0.02 * torch.randn(2, 4, 2)
+    out = s.ddpm_step(x, eps, tau, tau_prev, generator=torch.Generator().manual_seed(7))
+    ab = s.alphas_cumprod[tau].float()
+    abp = s.alphas_cumprod[tau_prev].float()
+    x0 = (x - (1 - ab).sqrt() * eps) / ab.sqrt()
+    assert x0.abs().max() <= 1.0  # this case is genuinely unclipped
+    alpha, = (ab / abp,)
+    beta = 1 - alpha
+    x0c = abp.sqrt() * beta / (1 - ab)
+    xc = alpha.sqrt() * (1 - abp) / (1 - ab)
+    var = (1 - abp) / (1 - ab) * beta
+    z = torch.empty_like(x).normal_(generator=torch.Generator().manual_seed(7))
+    expected = x0c * x0 + xc * x + var.clamp(min=0).sqrt() * z  # canonical (clip x0, x_t)
+    assert torch.allclose(out, expected, atol=1e-5)
+    assert torch.allclose(s.ddpm_step(x, eps, tau, -1), x0, atol=1e-6)  # final step = clip(x0)
+
+
+def test_scheduler_timestep_spacing_is_a_named_config_rule():
+    from actsemble.policies.diffusion.scheduler import DiffusionScheduler
+    lead = DiffusionScheduler(num_train_steps=100, timestep_spacing="leading").inference_timesteps(16)
+    lin = DiffusionScheduler(num_train_steps=100, timestep_spacing="linspace").inference_timesteps(16)
+    assert lead.tolist() == [90, 84, 78, 72, 66, 60, 54, 48, 42, 36, 30, 24, 18, 12, 6, 0]
+    assert lin.tolist() == [94, 88, 81, 75, 69, 62, 56, 50, 44, 38, 31, 25, 19, 12, 6, 0]  # legacy
+    with pytest.raises(ValueError, match="timestep_spacing"):
+        DiffusionScheduler(timestep_spacing="bogus")
+
+
+def test_detr_act_has_separate_projection_and_final_norm():
+    kw = dict(obs_feature_dim=6, action_dim=2, obs_horizon=1, prediction_horizon=8,
+              hidden_dim=32, n_heads=4, n_encoder_layers=2, n_decoder_layers=2, dim_feedforward=64)
+    detr = ACTModel(pos_embedding="sinusoidal", arch="detr", **kw)
+    assert detr.obs_proj_dec is not detr.obs_proj  # separate posterior/decoder projections
+    assert hasattr(detr, "decoder_norm")
+    tb = ACTModel(arch="torch_builtin", **kw)
+    assert not hasattr(tb, "obs_proj_dec") and not hasattr(tb, "decoder_norm")
+
+
+def test_compute_stats_observation_only_toggle():
+    from actsemble.data.normalization import compute_stats
+
+    class _E:
+        state = np.array([[0.0], [1.0], [2.0]], np.float32)
+        next_state = np.array([[10.0], [11.0], [12.0]], np.float32)  # different -> shifts stats
+        action = np.zeros((3, 1), np.float32)
+
+    with_next = compute_stats([_E()], method=STANDARDIZE, include_next_state=True)
+    without = compute_stats([_E()], method=STANDARDIZE, include_next_state=False)
+    assert np.allclose(without.state_mean, [1.0])  # mean of [0,1,2] only
+    assert not np.allclose(with_next.state_mean, without.state_mean)
+
+
+def test_act_episode_dataset_fixed_is_deterministic_across_accesses():
+    eps = [_Ep(12), _Ep(20)]
+    norm = Normalizer(NormalizationStats(
+        method=STANDARDIZE, state_mean=np.zeros(3, np.float32), state_std=np.ones(3, np.float32),
+        action_mean=np.zeros(2, np.float32), action_std=np.ones(2, np.float32)))
+    d = ACTEpisodeDataset(eps, norm, obs_horizon=1, prediction_horizon=8, start_seed=3, fixed=True)
+    assert [d[i]["t"].item() for i in range(2)] == [d[i]["t"].item() for i in range(2)]
+
+
 def test_act_episode_dataset_len_and_reproducible():
     eps = [_Ep(12), _Ep(20), _Ep(8)]
     norm = Normalizer(NormalizationStats(

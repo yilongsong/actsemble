@@ -70,6 +70,7 @@ def train_act_policy(
     stats = compute_stats(
         reader.episodes,
         method=str(policy_cfg.get("normalization_method", "minmax_to_unit_range")),
+        include_next_state=False,  # reference ACT: observation-sequence stats only
     )
     normalizer = Normalizer(stats)
     meta = make_policy_meta(reader, policy_cfg, split.hash, stats)
@@ -91,7 +92,14 @@ def train_act_policy(
     else:
         train_ds = DiffusionWindowDataset(train_eps, normalizer, **ds_kwargs)
     val_eps = [ep_by_id[i] for i in split.val_episode_ids]
-    val_ds = DiffusionWindowDataset(val_eps, normalizer, **ds_kwargs) if val_eps else None
+    if not val_eps:
+        val_ds = None
+    elif episode_sampling:  # episode-weighted + deterministic (one fixed window per episode)
+        val_ds = ACTEpisodeDataset(
+            val_eps, normalizer, start_seed=gen_seeds["act_sampling"] + 1, fixed=True, **ds_kwargs
+        )
+    else:
+        val_ds = DiffusionWindowDataset(val_eps, normalizer, **ds_kwargs)
 
     batch_size = int(tcfg.get("batch_size", 256))
     loader = DataLoader(

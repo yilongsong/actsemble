@@ -30,11 +30,15 @@ run (`scripts/overnight_canonical.py`). Coverage: `tests/test_fidelity_fixes.py`
   (gated; the stabilized `(1+scale)*h + bias` stays the default so lightweight
   checkpoints keep their semantics). A `prediction_type` other than `epsilon` now
   raises instead of being silently ignored.
-- **ACT is now DETR-VAE-faithful.** `arch: detr` = ReLU + **post-norm** layers,
-  positional embeddings injected into the attention **query/key only**, and a
-  **zero-initialized decoder target** with learned query positions injected at
-  every layer (was GELU + pre-norm + learned queries fed as decoder input values).
-  Gated; `torch_builtin` (lightweight) stays the default.
+- **ACT is DETR-VAE-*style* (close to reference ACT, not a line-by-line port).**
+  `arch: detr` = ReLU + **post-norm** layers, positional embeddings injected into
+  the attention **query/key only**, a **zero-initialized decoder target** with
+  learned query positions injected at every layer, **separate posterior/decoder
+  observation projections**, a **final decoder LayerNorm**, **DETR xavier init**,
+  **observation-only normalization**, and **episode-weighted train + (fixed) val**
+  (was GELU + pre-norm + shared projection + queries-as-input + next_state-in-stats).
+  Gated; `torch_builtin` (lightweight) stays the default. Takes effect on the ACT
+  retrain. Remaining residuals below.
 - **ACT data recipe.** `episode_sampling: true` weights **episodes** (not
   transitions) equally per epoch with a random start (reference ACT); `standardize`
   clips std to `>= 0.01` (reference ACT) so near-constant dims are not
@@ -49,9 +53,13 @@ run (`scripts/overnight_canonical.py`). Coverage: `tests/test_fidelity_fixes.py`
 - DP inference defaults to **DDIM-16** (fast — latency contract); DDPM-100 is the
   reference sampler (`inference_sampler: ddpm, inference_steps: 100`). Training is
   DDPM-100 either way — a deliberate, disclosed acceleration.
-- ACT is DETR-VAE-faithful in **architecture and recipe**, not a line-by-line port
-  of the reference checkpoint (weight-init details, exact intermediate-layer
-  aggregation may differ). Reference-faithful, not "the same file."
+- ACT is a **state-conditioned** DETR-VAE reproduction, NOT the vision-based ALOHA
+  system and NOT a line-by-line port: no image backbone / image-token path; chunk
+  16 (task-matched to PushT, vs ALOHA 100); batch 64 (vs 8); exact init *constants*
+  for the CLS/query/pos embeddings are not matched (xavier on the weights is).
+  Describe it as "state-conditioned ACT (DETR-VAE-style)", never "exact ACT". The
+  chunk length also scopes our temporal-ensembling result to chunk-16 PushT — it is
+  not a test of ACT's chunk-100 TE claim (`docs/findings_temporal_replan.md`).
 - Flow matching is a **conditional rectified-flow baseline** over the DP U-Net —
   NOT a reproduction of pi0 (VLM + action expert) or PointFlowMatch (point-cloud
   SO(3) flow). Labeled as such everywhere.

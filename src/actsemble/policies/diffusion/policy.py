@@ -50,6 +50,7 @@ def build_scheduler(policy_cfg: dict) -> DiffusionScheduler:
     return DiffusionScheduler(
         num_train_steps=int(dcfg.get("training_steps", 100)),
         schedule=str(dcfg.get("beta_schedule", "cosine")),
+        timestep_spacing=str(dcfg.get("timestep_spacing", "leading")),
     )
 
 

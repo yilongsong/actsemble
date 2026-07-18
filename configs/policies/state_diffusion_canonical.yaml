@@ -26,6 +26,7 @@ diffusion:
   beta_schedule: cosine                # squaredcos_cap_v2
   inference_sampler: ddim              # default fast sampler; ddpm+100 = reference baseline
   inference_steps: 16
+  timestep_spacing: leading            # conventional diffusers spacing; recorded in checkpoint+eval
   prediction_type: epsilon
   temperature: 1.0
 

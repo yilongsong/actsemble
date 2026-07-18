@@ -54,6 +54,29 @@ def panel_from_eval_cfg(eval_cfg: dict, num_episodes: int | None = None) -> Pane
     return Panel(name="legacy", env_seed=int(eval_cfg.get("seed", 0)), num_episodes=n)
 
 
+def _sampler_provenance(policy) -> dict:
+    """Exact inference-sampler settings, recorded into the result so a run is
+    reproducible from the eval output — not just from source code. For diffusion
+    this is the sampler, the spacing rule, and the EXACT timestep subsequence."""
+    sched = getattr(policy, "scheduler", None)
+    if sched is not None and hasattr(policy, "num_inference_steps"):
+        n = int(policy.num_inference_steps)
+        return {
+            "family": "diffusion",
+            "sampler": getattr(policy, "sampler", "ddim"),
+            "num_train_steps": int(sched.num_train_steps),
+            "num_inference_steps": n,
+            "timestep_spacing": getattr(sched, "timestep_spacing", "leading"),
+            "timesteps": sched.inference_timesteps(n).tolist(),
+            "temperature": float(getattr(policy, "temperature", 1.0)),
+        }
+    if hasattr(policy, "num_inference_steps") and hasattr(policy, "time_scale"):
+        return {"family": "flow", "sampler": "euler",
+                "num_steps": int(policy.num_inference_steps),
+                "time_scale": float(policy.time_scale)}
+    return {"family": "deterministic"}  # ACT: latent pinned to 0 at inference
+
+
 def run_panel_episode(
     env,
     system,
@@ -242,6 +265,7 @@ def evaluate_system(
         "panel": panel.to_dict(),
         "primary_metric": PRIMARY_METRIC,
         "num_candidates": system.num_candidates,
+        "sampler": _sampler_provenance(policy),
         "num_episodes": n_episodes,
         "max_steps": max_steps,
         "environment_seeds": [e.env_seed for e in seeds],

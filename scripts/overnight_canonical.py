@@ -153,7 +153,13 @@ def main() -> int:
         except Exception as exc:  # keep going so one failure doesn't waste the night
             failures[fam] = repr(exc)
             print(f"[overnight:{fam}] FAILED: {exc}\n{traceback.format_exc()}", flush=True)
-        save_json({"results": results, "failures": failures},
+        # Rebuild the summary from the per-family files so that separate
+        # --family invocations sharing this out-root MERGE instead of clobbering.
+        merged = {}
+        for p in sorted(out_root.glob("overnight_*.json")):
+            if p.stem != "overnight_summary":
+                merged[p.stem.replace("overnight_", "")] = load_json(p)
+        save_json({"results": merged, "failures": failures},
                   out_root / "overnight_summary.json")
 
     print("\n" + "=" * 78)

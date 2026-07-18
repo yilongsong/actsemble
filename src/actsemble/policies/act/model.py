@@ -190,12 +190,27 @@ class ACTModel(nn.Module):
                 DETRDecoderLayer(hidden_dim, n_heads, dim_feedforward, dropout)
                 for _ in range(n_decoder_layers)
             )
+            # Reference ACT uses SEPARATE joint-state projections for the CVAE
+            # posterior (obs_proj) and the policy decoder (obs_proj_dec), and a
+            # final LayerNorm over the decoder stack before the action head.
+            self.obs_proj_dec = nn.Linear(self.obs_feature_dim, hidden_dim)
+            self.decoder_norm = nn.LayerNorm(hidden_dim)
 
         learned_pos = [self.cls_token, self.memory_pos, self.query_embed]
         if pos_embedding == "learned":
             learned_pos.append(self.style_pos)  # sinusoidal style_pos is a fixed buffer
         for p in learned_pos:
             nn.init.normal_(p, std=0.02)
+
+        if arch == "detr":  # DETR _reset_parameters: xavier_uniform on all >1-D weights
+            for module in (self.style_layers, self.memory_layers, self.decoder_layers):
+                for p in module.parameters():
+                    if p.dim() > 1:
+                        nn.init.xavier_uniform_(p)
+            for lin in (self.obs_proj, self.obs_proj_dec, self.action_proj,
+                        self.latent_proj, self.latent_head, self.action_head):
+                nn.init.xavier_uniform_(lin.weight)
+                nn.init.zeros_(lin.bias)
 
     def encode_style(self, obs: torch.Tensor, actions: torch.Tensor,
                      action_mask: torch.Tensor | None = None):
@@ -226,18 +241,20 @@ class ACTModel(nn.Module):
     def decode(self, obs: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
         """[B,H_o,feat], [B,latent_dim] -> predicted action chunk [B,H_p,A]."""
         b = obs.shape[0]
-        memory = torch.cat([self.latent_proj(z).unsqueeze(1), self.obs_proj(obs)], dim=1)
         if self.arch == "torch_builtin":
+            memory = torch.cat([self.latent_proj(z).unsqueeze(1), self.obs_proj(obs)], dim=1)
             memory = self.memory_encoder(memory + self.memory_pos)
             h = self.decoder(self.query_embed.expand(b, -1, -1), memory)
-        else:
-            for layer in self.memory_layers:
-                memory = layer(memory, pos=self.memory_pos)
-            query_pos = self.query_embed.expand(b, -1, -1)
-            h = torch.zeros_like(query_pos)  # DETR: zero-initialized decoder targets
-            for layer in self.decoder_layers:
-                h = layer(h, memory, query_pos=query_pos, memory_pos=self.memory_pos)
-        return self.action_head(h)
+            return self.action_head(h)
+        # detr: separate decoder obs projection, zero-target decode, final norm
+        memory = torch.cat([self.latent_proj(z).unsqueeze(1), self.obs_proj_dec(obs)], dim=1)
+        for layer in self.memory_layers:
+            memory = layer(memory, pos=self.memory_pos)
+        query_pos = self.query_embed.expand(b, -1, -1)
+        h = torch.zeros_like(query_pos)  # DETR: zero-initialized decoder targets
+        for layer in self.decoder_layers:
+            h = layer(h, memory, query_pos=query_pos, memory_pos=self.memory_pos)
+        return self.action_head(self.decoder_norm(h))
 
     def forward(self, obs: torch.Tensor, actions: torch.Tensor, *,
                 action_mask: torch.Tensor | None = None,
