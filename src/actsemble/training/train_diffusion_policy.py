@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from pathlib import Path
 from typing import Callable
 
@@ -48,23 +49,81 @@ CheckpointCallback = Callable[..., None]
 
 
 class EMA:
-    """Exponential moving average of model parameters with warmup."""
+    """Exponential moving average of model parameters.
 
-    def __init__(self, model: torch.nn.Module, decay: float = 0.999):
+    Two warmup schedules: the default ``(1+s)/(10+s)`` ramp (lightweight
+    policies), or — when ``power`` is set — the diffusers ``EMAModel`` power
+    schedule ``1-(1+s/inv_gamma)^(-power)`` clamped to ``[min_value, max_value]``
+    (the authoritative Diffusion-Policy setting: power 0.75, max 0.9999)."""
+
+    def __init__(
+        self, model: torch.nn.Module, decay: float = 0.999, *,
+        power: float | None = None, inv_gamma: float = 1.0,
+        min_value: float = 0.0, max_value: float = 0.9999,
+    ):
         self.decay = float(decay)
+        self.power = None if power is None else float(power)
+        self.inv_gamma = float(inv_gamma)
+        self.min_value = float(min_value)
+        self.max_value = float(max_value)
         self.step = 0
         self.shadow = copy.deepcopy(model).eval()
         for p in self.shadow.parameters():
             p.requires_grad_(False)
 
+    def _decay(self) -> float:
+        if self.power is None:
+            return min(self.decay, (1 + self.step) / (10 + self.step))
+        s = self.step - 1  # diffusers: max(0, optimization_step - update_after_step - 1)
+        if s <= 0:
+            return 0.0
+        d = 1.0 - (1.0 + s / self.inv_gamma) ** (-self.power)
+        return float(min(max(d, self.min_value), self.max_value))
+
     def update(self, model: torch.nn.Module) -> None:
         self.step += 1
-        decay = min(self.decay, (1 + self.step) / (10 + self.step))
+        decay = self._decay()
         with torch.no_grad():
             for ema_p, p in zip(self.shadow.parameters(), model.parameters()):
                 ema_p.lerp_(p.detach(), 1.0 - decay)
             for ema_b, b in zip(self.shadow.buffers(), model.buffers()):
                 ema_b.copy_(b)
+
+
+def resolve_total_steps(tcfg: dict, n_train_windows: int, batch_size: int,
+                        max_steps_override: int | None = None) -> int:
+    """Training budget, dataset-adaptive. Precedence: ``--max-steps`` override >
+    explicit ``training.max_steps`` > ``training.max_epochs`` (converted to steps
+    via this dataset's window count) > 10000. Expressing the budget in EPOCHS
+    makes it consistent across dataset sizes; the exact number is calibrated to
+    exceed the validation plateau and checkpoint selection captures the peak."""
+    if max_steps_override is not None:
+        return int(max_steps_override)
+    if tcfg.get("max_steps") is not None:
+        return int(tcfg["max_steps"])
+    if tcfg.get("max_epochs") is not None:
+        steps_per_epoch = max(1, n_train_windows // int(batch_size))  # matches drop_last
+        return int(tcfg["max_epochs"]) * steps_per_epoch
+    return 10000
+
+
+def build_lr_scheduler(optimizer, tcfg: dict, total_steps: int):
+    """Optional LR schedule. ``constant`` (default) -> None; ``cosine`` -> linear
+    warmup for ``lr_warmup_steps`` then cosine decay to 0 (authoritative DP)."""
+    kind = str(tcfg.get("lr_scheduler", "constant"))
+    if kind == "constant":
+        return None
+    if kind != "cosine":
+        raise ValueError(f"Unknown lr_scheduler: {kind}")
+    warmup = int(tcfg.get("lr_warmup_steps", 0))
+
+    def lr_lambda(step: int) -> float:
+        if step < warmup:
+            return (step + 1) / max(1, warmup)
+        prog = (step - warmup) / max(1, total_steps - warmup)
+        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * min(1.0, prog))))
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
 def make_policy_meta(reader: DatasetReader, policy_cfg: dict, split_hash: str, norm_stats) -> PolicyMeta:
@@ -94,6 +153,11 @@ def make_policy_meta(reader: DatasetReader, policy_cfg: dict, split_hash: str, n
     for key in ("subset_hash", "subset_size", "subset_seed", "source_bundle_sha256"):
         if key in reader.metadata.extra:
             meta.extra[key] = reader.metadata.extra[key]
+    # Window alignment used at training time (future_only | diffusion_policy);
+    # the eval system's execution offset must match (H_o-1 for diffusion_policy).
+    meta.extra["window_alignment"] = str(
+        policy_cfg.get("action", {}).get("window_alignment", "future_only")
+    )
     return meta
 
 
@@ -146,6 +210,8 @@ def train_diffusion_policy(
         obs_horizon=meta.obs_horizon,
         prediction_horizon=meta.prediction_horizon,
         include_previous_action=meta.include_previous_action,
+        alignment=str(policy_cfg.get("action", {}).get("window_alignment", "future_only")),
+        action_horizon=meta.action_horizon,  # reference SequenceSampler terminal range
     )
     train_ds = DiffusionWindowDataset(train_eps, normalizer, **ds_kwargs)
     val_ds = DiffusionWindowDataset(val_eps, normalizer, **ds_kwargs) if val_eps else None
@@ -175,11 +241,24 @@ def train_diffusion_policy(
         model.parameters(),
         lr=float(tcfg.get("learning_rate", 1e-4)),
         weight_decay=float(tcfg.get("weight_decay", 1e-6)),
+        betas=tuple(tcfg.get("adam_betas", (0.9, 0.999))),
     )
-    ema = EMA(model, decay=float(tcfg.get("ema_decay", 0.999)))
+    ema_cfg = tcfg.get("ema", {})
+    ema = EMA(
+        model,
+        decay=float(tcfg.get("ema_decay", 0.999)),
+        power=ema_cfg.get("power"),
+        inv_gamma=float(ema_cfg.get("inv_gamma", 1.0)),
+        min_value=float(ema_cfg.get("min_value", 0.0)),
+        max_value=float(ema_cfg.get("max_value", 0.9999)),
+    )
     grad_clip = float(tcfg.get("gradient_clip_norm", 1.0))
     mask_padding = bool(tcfg.get("mask_padded_actions", False))
-    total_steps = int(max_steps if max_steps is not None else tcfg.get("max_steps", 10000))
+    total_steps = resolve_total_steps(tcfg, len(train_ds), batch_size, max_steps)
+    steps_per_epoch = max(1, len(train_ds) // batch_size)  # matches drop_last
+    # Optional cosine LR (authoritative DP). Not restored on resume (canonical
+    # trains one-shot; the lightweight config uses constant LR).
+    lr_scheduler = build_lr_scheduler(optimizer, tcfg, total_steps)
     log_every = int(tcfg.get("log_every", 50))
     eval_every = int(tcfg.get("eval_every", max(1, min(500, total_steps))))
     checkpoint_every = tcfg.get("checkpoint_every")  # None disables snapshots
@@ -227,6 +306,7 @@ def train_diffusion_policy(
          "normalization_hash": stats.hash, "device": str(device),
          "training_seed": seed,
          "named_generator_seeds": gen_seeds,
+         "steps_per_epoch": steps_per_epoch, "total_steps": total_steps,
          "early_stopping": "disabled"},
         output_dir / "train_config.json",
     )
@@ -325,6 +405,8 @@ def train_diffusion_policy(
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()
+        if lr_scheduler is not None:
+            lr_scheduler.step()
         ema.update(model)
         step += 1
         final_train_loss = loss.item()
@@ -355,6 +437,7 @@ def train_diffusion_policy(
     snapshots = sorted(checkpoint_dir.glob("step_*.pt")) if checkpoint_every else []
     return {
         "steps": step,
+        "steps_per_epoch": steps_per_epoch,
         "final_train_loss": final_train_loss,
         "best_val_loss": None if best_val == float("inf") else best_val,
         "checkpoints": {

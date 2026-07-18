@@ -61,6 +61,8 @@ class CompatibilityDataset(Dataset):
         include_previous_action: bool,
         negatives_per_positive: int,
         negative_seed: int,
+        alignment: str = "future_only",
+        action_horizon: int | None = None,
     ):
         self.episodes = episodes
         self.normalizer = normalizer
@@ -70,7 +72,15 @@ class CompatibilityDataset(Dataset):
         self.include_previous_action = bool(include_previous_action)
         self.negatives_per_positive = int(negatives_per_positive)
         self.negative_seed = int(negative_seed)
-        self.indices = enumerate_window_indices(episodes)
+        # Positive chunks must be extracted with the SAME window alignment as the
+        # policy whose candidates this scorer will rank (future_only vs
+        # diffusion_policy), else positives and scored candidates are misaligned.
+        self.alignment = str(alignment)
+        self.action_horizon = None if action_horizon is None else int(action_horizon)
+        self.indices = enumerate_window_indices(
+            episodes, alignment=self.alignment, obs_horizon=self.obs_horizon,
+            prediction_horizon=self.prediction_horizon, action_horizon=self.action_horizon,
+        )
 
     def __len__(self) -> int:
         return len(self.indices)
@@ -79,7 +89,8 @@ class CompatibilityDataset(Dataset):
         ei, t = self.indices[i]
         ep = self.episodes[ei]
         w = extract_window(
-            ep, t, obs_horizon=self.obs_horizon, prediction_horizon=self.prediction_horizon
+            ep, t, obs_horizon=self.obs_horizon,
+            prediction_horizon=self.prediction_horizon, alignment=self.alignment,
         )
         obs = np.asarray(self.normalizer.normalize_state(w.obs_history), dtype=np.float32)
         if self.include_previous_action:
@@ -229,6 +240,10 @@ def train_component(
         obs_horizon=shared_meta.obs_horizon,
         prediction_horizon=shared_meta.prediction_horizon,
         include_previous_action=shared_meta.include_previous_action,
+        # Positives MUST share the policy's chunk alignment, else the scorer sees
+        # index 0 = a_t in training but a_{t-1} when ranking DP-aligned candidates.
+        alignment=shared_meta.extra.get("window_alignment", "future_only"),
+        action_horizon=shared_meta.action_horizon,
         negatives_per_positive=int(tcfg.get("negatives_per_positive", 1)),
         negative_seed=int(tcfg.get("negative_seed", 1234)),
     )

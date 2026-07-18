@@ -14,6 +14,7 @@ import torch
 _LOADERS = {
     "actsemble_diffusion_policy": "actsemble.policies.diffusion.policy:DiffusionPolicy",
     "actsemble_act_policy": "actsemble.policies.act.policy:ACTPolicy",
+    "actsemble_flow_policy": "actsemble.policies.flow.policy:FlowMatchingPolicy",
 }
 
 

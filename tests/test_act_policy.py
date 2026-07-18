@@ -164,6 +164,21 @@ def test_build_act_model_reads_config():
     assert m.obs_feature_dim == SD and m.action_dim == AD and m.prediction_horizon == HP
 
 
+def test_canonical_sinusoidal_pos_embedding_is_fixed_and_obs_horizon_1():
+    m = ACTModel(
+        obs_feature_dim=SD, action_dim=AD, obs_horizon=1, prediction_horizon=HP,
+        hidden_dim=32, latent_dim=8, n_heads=2, n_encoder_layers=1, n_decoder_layers=1,
+        dim_feedforward=32, dropout=0.0, pos_embedding="sinusoidal",
+    )
+    params = {n for n, _ in m.named_parameters()}
+    buffers = {n for n, _ in m.named_buffers()}
+    assert "style_pos" in buffers and "style_pos" not in params  # fixed, not learned
+    m.eval()
+    obs = torch.randn(2, 1, SD)  # obs_horizon 1 (current observation only)
+    pred, mu, logvar = m(obs, torch.randn(2, HP, AD))
+    assert pred.shape == (2, HP, AD) and mu.shape == (2, 8)
+
+
 # ---- training loss wiring (tiny overfit) ----------------------------------
 def test_overfit_one_batch_reduces_l1():
     torch.manual_seed(0)

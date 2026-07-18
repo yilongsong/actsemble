@@ -1,0 +1,51 @@
+name: state_flow_canonical
+type: flow                 # dispatch: shares the U-Net with diffusion, so an explicit family
+
+# Conditional rectified-flow BASELINE (standard CFM / rectified flow; Lipman/Liu/
+# Tong). NOT a reproduction of a specific published robot flow-matching system
+# (pi0's VLM+action-expert, PointFlowMatch's point-cloud SO(3) flow): it reuses
+# the reference Diffusion-Policy U-Net as the velocity field so diffusion-vs-flow
+# is a controlled architecture-matched comparison. Straight-path velocity
+# regression; Euler-ODE inference at few steps (fast -> supports high replan freq).
+observation:
+  mode: state
+  history: 2
+  include_previous_action: false
+
+action:
+  prediction_horizon: 16
+  execution_horizon: 8
+  window_alignment: diffusion_policy
+
+model:
+  type: conditional_unet_1d
+  channels: [256, 512, 1024]
+  diffusion_embedding_dim: 256
+  kernel_size: 5
+  cond_predict_scale: true             # match the reference DP U-Net FiLM (scale*h + bias)
+
+flow:
+  inference_steps: 10        # Euler ODE steps (CFM is strong at few steps)
+  time_scale: 1000.0         # maps t in [0,1] onto the U-Net timestep-embedding range
+
+training:
+  seed: 0
+  batch_size: 256
+  learning_rate: 0.0001
+  weight_decay: 0.000001
+  adam_betas: [0.95, 0.999]
+  lr_scheduler: cosine
+  lr_warmup_steps: 500
+  ema:
+    power: 0.75
+    inv_gamma: 1.0
+    max_value: 0.9999
+    min_value: 0.0
+  gradient_clip_norm: 1.0
+  val_fraction: 0.1
+  split_seed: 0
+  mask_padded_actions: false
+  max_epochs: 500                      # dataset-adaptive budget (pilot-calibratable)
+  checkpoint_every: 1000               # periodic snapshots for screening-based selection
+  log_every: 50
+  eval_every: 1000

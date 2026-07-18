@@ -29,6 +29,30 @@ def build_system(
     *,
     candidate_root_seed: int = 0,
 ) -> ReplanningSystemBase:
+    """Build a system and apply the execution-window offset (``execution.action_offset``,
+    e.g. H_o-1 for the Diffusion-Policy window alignment; default 0)."""
+    system = _build_system_impl(
+        system_cfg, policy, components, candidate_root_seed=candidate_root_seed
+    )
+    # Default the execution offset from the policy's training window alignment so
+    # any system using a Diffusion-Policy-aligned checkpoint executes the action
+    # for time t (chunk index H_o-1), not a past-aligned action, even when the
+    # system config does not mention it. An explicit execution.action_offset wins.
+    align = (getattr(policy.meta, "extra", None) or {}).get("window_alignment", "future_only")
+    default_offset = (policy.meta.obs_horizon - 1) if align == "diffusion_policy" else 0
+    offset = int(system_cfg.get("execution", {}).get("action_offset", default_offset))
+    if offset:
+        system.set_execution_offset(offset)
+    return system
+
+
+def _build_system_impl(
+    system_cfg: dict,
+    policy,
+    components: list,
+    *,
+    candidate_root_seed: int = 0,
+) -> ReplanningSystemBase:
     policy_cfg = system_cfg.get("policy", {})
     selection = system_cfg.get("selection", {})
     sel_type = selection.get("type", "candidate_zero")

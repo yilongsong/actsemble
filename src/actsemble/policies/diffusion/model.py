@@ -44,11 +44,13 @@ class Conv1dBlock(nn.Module):
 class ConditionalResBlock1d(nn.Module):
     """Two conv blocks with FiLM (scale, bias) conditioning after the first."""
 
-    def __init__(self, in_ch: int, out_ch: int, cond_dim: int, kernel_size: int = 5):
+    def __init__(self, in_ch: int, out_ch: int, cond_dim: int, kernel_size: int = 5,
+                 *, cond_predict_scale: bool = False):
         super().__init__()
         self.block1 = Conv1dBlock(in_ch, out_ch, kernel_size)
         self.block2 = Conv1dBlock(out_ch, out_ch, kernel_size)
         self.cond_encoder = nn.Sequential(nn.Mish(), nn.Linear(cond_dim, out_ch * 2))
+        self.cond_predict_scale = bool(cond_predict_scale)
         self.residual = (
             nn.Conv1d(in_ch, out_ch, 1) if in_ch != out_ch else nn.Identity()
         )
@@ -56,7 +58,10 @@ class ConditionalResBlock1d(nn.Module):
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         h = self.block1(x)
         scale, bias = self.cond_encoder(cond).unsqueeze(-1).chunk(2, dim=1)
-        h = h * (1 + scale) + bias
+        if self.cond_predict_scale:
+            h = scale * h + bias          # official Diffusion Policy (cond_predict_scale=True)
+        else:
+            h = h * (1 + scale) + bias    # stabilized-FiLM variant (lightweight checkpoints)
         h = self.block2(h)
         return h + self.residual(x)
 
@@ -93,10 +98,12 @@ class ConditionalUnet1d(nn.Module):
         channels: tuple[int, ...] = (128, 256, 512),
         diffusion_embedding_dim: int = 128,
         kernel_size: int = 5,
+        cond_predict_scale: bool = False,
     ):
         super().__init__()
         self.action_dim = action_dim
         self.global_cond_dim = global_cond_dim
+        self.cond_predict_scale = bool(cond_predict_scale)
 
         self.time_mlp = nn.Sequential(
             SinusoidalPosEmb(diffusion_embedding_dim),
@@ -115,16 +122,18 @@ class ConditionalUnet1d(nn.Module):
             self.downs.append(
                 nn.ModuleList(
                     [
-                        ConditionalResBlock1d(ci, co, cond_dim, kernel_size),
-                        ConditionalResBlock1d(co, co, cond_dim, kernel_size),
+                        ConditionalResBlock1d(ci, co, cond_dim, kernel_size, cond_predict_scale=cond_predict_scale),
+                        ConditionalResBlock1d(co, co, cond_dim, kernel_size, cond_predict_scale=cond_predict_scale),
                         Downsample1d(co) if not last else nn.Identity(),
                     ]
                 )
             )
 
         mid_ch = channels[-1]
-        self.mid1 = ConditionalResBlock1d(mid_ch, mid_ch, cond_dim, kernel_size)
-        self.mid2 = ConditionalResBlock1d(mid_ch, mid_ch, cond_dim, kernel_size)
+        self.mid1 = ConditionalResBlock1d(mid_ch, mid_ch, cond_dim, kernel_size,
+                                          cond_predict_scale=cond_predict_scale)
+        self.mid2 = ConditionalResBlock1d(mid_ch, mid_ch, cond_dim, kernel_size,
+                                          cond_predict_scale=cond_predict_scale)
 
         # Mirrors Diffusion Policy's ConditionalUnet1D: one up block per
         # down block except the first; every up block upsamples, restoring
@@ -134,8 +143,8 @@ class ConditionalUnet1d(nn.Module):
             self.ups.append(
                 nn.ModuleList(
                     [
-                        ConditionalResBlock1d(co * 2, ci, cond_dim, kernel_size),
-                        ConditionalResBlock1d(ci, ci, cond_dim, kernel_size),
+                        ConditionalResBlock1d(co * 2, ci, cond_dim, kernel_size, cond_predict_scale=cond_predict_scale),
+                        ConditionalResBlock1d(ci, ci, cond_dim, kernel_size, cond_predict_scale=cond_predict_scale),
                         Upsample1d(ci),
                     ]
                 )

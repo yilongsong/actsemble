@@ -23,8 +23,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from actsemble.config import load_config
 from actsemble.training.train_act_policy import train_act_policy
 from actsemble.training.train_diffusion_policy import train_diffusion_policy
+from actsemble.training.train_flow_policy import train_flow_policy
 
-TRAINERS = {"conditional_unet_1d": train_diffusion_policy, "act": train_act_policy}
+TRAINERS = {"diffusion": train_diffusion_policy, "act": train_act_policy, "flow": train_flow_policy}
+
+
+def resolve_family(cfg: dict) -> str:
+    """Training family: explicit top-level ``type`` if present, else inferred from
+    ``model.type`` (conditional_unet_1d -> diffusion, act -> act) for older configs.
+    Flow and diffusion share the U-Net, so flow configs must set ``type: flow``."""
+    if cfg.get("type"):
+        return str(cfg["type"])
+    return {"conditional_unet_1d": "diffusion", "act": "act"}.get(
+        cfg.get("model", {}).get("type", "conditional_unet_1d"), "diffusion"
+    )
 
 
 def main() -> int:
@@ -40,11 +52,11 @@ def main() -> int:
     import torch
 
     cfg = load_config(args.config)
-    model_type = cfg.get("model", {}).get("type", "conditional_unet_1d")
-    if model_type not in TRAINERS:
-        raise ValueError(f"Unknown model.type {model_type!r}; expected one of {list(TRAINERS)}")
+    family = resolve_family(cfg)
+    if family not in TRAINERS:
+        raise ValueError(f"Unknown training family {family!r}; expected one of {list(TRAINERS)}")
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    summary = TRAINERS[model_type](
+    summary = TRAINERS[family](
         policy_cfg=cfg,
         dataset_path=args.dataset,
         output_dir=args.output_dir,

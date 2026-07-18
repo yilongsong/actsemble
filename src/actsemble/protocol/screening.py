@@ -19,10 +19,18 @@ import numpy as np
 from ..evaluation.evaluator import episode_row, run_panel_episode
 from ..evaluation.metrics import wilson_interval
 from ..evaluation.panels import Panel, panel_episodes
-from ..policies.diffusion.policy import DiffusionPolicy
-from ..systems.standalone import StandaloneDiffusionSystem
+from ..policies.loader import load_policy
+from ..systems.factory import build_system
 from ..utils.hashing import hash_file
 from ..utils.serialization import load_json, save_json
+
+# Standalone candidate-zero config; build_system derives the execution offset
+# from the policy's window alignment (H_o-1 for diffusion-policy chunks).
+_STANDALONE_CFG = {
+    "policy": {"num_candidates": 1},
+    "selection": {"type": "candidate_zero"},
+    "execution": {},
+}
 
 
 def evaluate_checkpoint_on_panel(
@@ -36,9 +44,11 @@ def evaluate_checkpoint_on_panel(
 ) -> dict:
     """Standalone (K=1, candidate zero) evaluation of one checkpoint on a
     fixed panel. Shared by screening and confirmation so both stages use
-    exactly the same rollout semantics."""
-    policy = DiffusionPolicy.from_checkpoint(checkpoint_path, device=device, use_ema=True)
-    system = StandaloneDiffusionSystem(policy)
+    exactly the same rollout semantics. Policy-architecture-agnostic (diffusion /
+    ACT / flow via ``load_policy``); the execution offset is applied for
+    diffusion-policy-aligned checkpoints via ``build_system``."""
+    policy = load_policy(checkpoint_path, device=device, use_ema=True)
+    system = build_system(_STANDALONE_CFG, policy, [])
     rows = []
     for ep in panel_episodes(panel):
         result, _ = run_panel_episode(

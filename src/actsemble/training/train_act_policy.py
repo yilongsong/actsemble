@@ -17,14 +17,14 @@ from torch.utils.data import DataLoader
 
 from ..data.normalization import Normalizer, compute_stats
 from ..data.reader import DatasetReader
-from ..data.torch_dataset import DiffusionWindowDataset
+from ..data.torch_dataset import ACTEpisodeDataset, DiffusionWindowDataset
 from ..data.windows import split_episodes
 from ..policies.act.model import ACTModel
 from ..policies.act.policy import ACTPolicy, build_act_model
 from ..seed import derive_seed, seed_everything, torch_generator
 from ..utils.serialization import save_json
 from .logging import TrainingLogger
-from .train_diffusion_policy import EMA, make_policy_meta
+from .train_diffusion_policy import EMA, make_policy_meta, resolve_total_steps
 
 
 def named_act_seeds(seed: int) -> dict[str, int]:
@@ -33,6 +33,7 @@ def named_act_seeds(seed: int) -> dict[str, int]:
         "act_init": derive_seed(seed, "act_init"),
         "dataloader_order": derive_seed(seed, "dataloader_order"),
         "act_latent": derive_seed(seed, "act_latent"),
+        "act_sampling": derive_seed(seed, "act_sampling"),
         "validation": derive_seed(seed, "validation"),
     }
 
@@ -66,7 +67,10 @@ def train_act_policy(
         val_fraction=float(tcfg.get("val_fraction", 0.1)),
         seed=int(tcfg.get("split_seed", 0)),
     )
-    stats = compute_stats(reader.episodes)
+    stats = compute_stats(
+        reader.episodes,
+        method=str(policy_cfg.get("normalization_method", "minmax_to_unit_range")),
+    )
     normalizer = Normalizer(stats)
     meta = make_policy_meta(reader, policy_cfg, split.hash, stats)
 
@@ -76,9 +80,16 @@ def train_act_policy(
         prediction_horizon=meta.prediction_horizon,
         include_previous_action=meta.include_previous_action,
     )
-    train_ds = DiffusionWindowDataset(
-        [ep_by_id[i] for i in split.train_episode_ids], normalizer, **ds_kwargs
-    )
+    train_eps = [ep_by_id[i] for i in split.train_episode_ids]
+    # Canonical ACT weights episodes (not transitions) equally per epoch, with a
+    # random start timestep; the lightweight variant samples every transition.
+    episode_sampling = bool(tcfg.get("episode_sampling", False))
+    if episode_sampling:
+        train_ds = ACTEpisodeDataset(
+            train_eps, normalizer, start_seed=gen_seeds["act_sampling"], **ds_kwargs
+        )
+    else:
+        train_ds = DiffusionWindowDataset(train_eps, normalizer, **ds_kwargs)
     val_eps = [ep_by_id[i] for i in split.val_episode_ids]
     val_ds = DiffusionWindowDataset(val_eps, normalizer, **ds_kwargs) if val_eps else None
 
@@ -100,11 +111,13 @@ def train_act_policy(
         lr=float(tcfg.get("learning_rate", 1e-4)),
         weight_decay=float(tcfg.get("weight_decay", 1e-4)),
     )
-    ema = EMA(model, decay=float(tcfg.get("ema_decay", 0.999)))
+    use_ema = bool(tcfg.get("use_ema", True))  # canonical ACT: False (eval best-val raw weights)
+    ema = EMA(model, decay=float(tcfg.get("ema_decay", 0.999))) if use_ema else None
     kl_weight = float(policy_cfg.get("act", {}).get("kl_weight", 10.0))
     mask_padding = bool(tcfg.get("mask_padded_actions", True))  # canonical ACT masks padding
     grad_clip = float(tcfg.get("gradient_clip_norm", 1.0))
-    total_steps = int(max_steps if max_steps is not None else tcfg.get("max_steps", 30000))
+    total_steps = resolve_total_steps(tcfg, len(train_ds), batch_size, max_steps)
+    steps_per_epoch = max(1, len(train_ds) // batch_size)  # episode-weighted when episode_sampling
     log_every = int(tcfg.get("log_every", 50))
     eval_every = int(tcfg.get("eval_every", max(1, min(1000, total_steps))))
     checkpoint_every = tcfg.get("checkpoint_every")
@@ -116,7 +129,9 @@ def train_act_policy(
         {"policy_config": policy_cfg, "dataset_path": str(dataset_path), "split": split.to_dict(),
          "dataset_hash": reader.dataset_hash, "split_hash": split.hash,
          "normalization_hash": stats.hash, "device": str(device), "training_seed": seed,
-         "named_generator_seeds": gen_seeds, "kl_weight": kl_weight, "early_stopping": "disabled"},
+         "named_generator_seeds": gen_seeds, "kl_weight": kl_weight,
+         "steps_per_epoch": steps_per_epoch, "total_steps": total_steps,
+         "episode_sampling": episode_sampling, "early_stopping": "disabled"},
         output_dir / "train_config.json",
     )
 
@@ -137,21 +152,22 @@ def train_act_policy(
     def validate():
         if val_loader is None:
             return None
-        ema.shadow.to(device).eval()
+        m = ema.shadow if use_ema else model
+        m.to(device).eval()
         vgen = torch_generator(gen_seeds["validation"], device)
         with torch.no_grad():
-            losses = [act_loss(ema.shadow, vb, vgen)[0].item() for vb in val_loader]
+            losses = [act_loss(m, vb, vgen)[0].item() for vb in val_loader]
         return float(np.mean(losses))
 
     def save(path, *, with_train_state):
         train_state = (
-            {"step": step, "ema_step": ema.step, "optimizer": optimizer.state_dict(),
-             "best_val": best_val}
+            {"step": step, "ema_step": ema.step if use_ema else 0,
+             "optimizer": optimizer.state_dict(), "best_val": best_val}
             if with_train_state else None
         )
         ACTPolicy.save_checkpoint(
             path, config=policy_cfg, meta=meta, model_state=model.state_dict(),
-            ema_state=ema.shadow.state_dict(), train_state=train_state,
+            ema_state=ema.shadow.state_dict() if use_ema else None, train_state=train_state,
         )
 
     model.train()
@@ -171,7 +187,8 @@ def train_act_policy(
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()
-        ema.update(model)
+        if use_ema:
+            ema.update(model)
         step += 1
         final_loss = loss.item()
 
@@ -199,6 +216,7 @@ def train_act_policy(
 
     return {
         "steps": step,
+        "steps_per_epoch": steps_per_epoch,
         "final_train_loss": final_loss,
         "best_val_loss": None if best_val == float("inf") else best_val,
         "checkpoints": {"best_ema": str(output_dir / "best_ema.pt"),

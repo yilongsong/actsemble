@@ -41,6 +41,8 @@ def build_act_model(policy_cfg: dict, meta: PolicyMeta) -> ACTModel:
         n_decoder_layers=int(m.get("n_decoder_layers", 4)),
         dim_feedforward=int(m.get("dim_feedforward", 512)),
         dropout=float(m.get("dropout", 0.1)),
+        pos_embedding=str(m.get("pos_embedding", "learned")),
+        arch=str(m.get("arch", "torch_builtin")),
     )
 
 
@@ -161,9 +163,9 @@ class ACTPolicy:
         config = ckpt["config"]
         meta = PolicyMeta.from_dict(ckpt["meta"])
         model = build_act_model(config, meta)
-        if use_ema:
-            if ckpt.get("ema_state") is None:
-                raise ValueError(f"{path} has no EMA weights but use_ema=True")
+        # Canonical ACT trains without EMA (eval on the best-val raw weights), so
+        # fall back to model_state when no EMA is present rather than erroring.
+        if use_ema and ckpt.get("ema_state") is not None:
             model.load_state_dict(ckpt["ema_state"])
             weights_kind = "ema"
         else:

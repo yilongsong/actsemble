@@ -58,14 +58,17 @@ class DiffusionScheduler:
 
     # -- inference ---------------------------------------------------------
     def inference_timesteps(self, num_inference_steps: int) -> torch.Tensor:
-        """Strided descending timesteps, always ending at 0."""
+        """Conventional DDIM/DDPM subsequence (diffusers 'leading' spacing):
+        integer ``step_ratio = T // N`` gives timesteps ``0, r, 2r, ..., (N-1)r``
+        taken in descending order (ending at 0). The exact timesteps are a
+        deterministic function of (T, N) and are logged by the eval so the
+        sampler spacing is fully recorded."""
         if not 1 <= num_inference_steps <= self.num_train_steps:
             raise ValueError(
                 f"num_inference_steps must be in [1, {self.num_train_steps}]"
             )
-        stride = self.num_train_steps / num_inference_steps
-        ts = (np.arange(num_inference_steps) * stride).round().astype(np.int64)
-        ts = np.clip(ts, 0, self.num_train_steps - 1)
+        step_ratio = self.num_train_steps // num_inference_steps
+        ts = (np.arange(num_inference_steps) * step_ratio).astype(np.int64)
         return torch.from_numpy(ts[::-1].copy())
 
     def _pred_x0(self, x: torch.Tensor, eps: torch.Tensor, tau: int) -> torch.Tensor:

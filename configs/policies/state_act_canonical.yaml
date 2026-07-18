@@ -1,0 +1,51 @@
+name: state_act_canonical
+
+# Reference-faithful ACT (DETR-VAE), aligned to tonyzhaozh/act: hidden 512 / ff
+# 3200 / 4 enc + 7 dec layers, DETR-VAE transformer (ReLU, post-norm, zero-target
+# decoder with injected query positions; arch: detr), fixed sinusoidal CVAE
+# position embedding, conditions on the CURRENT observation only (history 1),
+# standardized (mean/std, std clipped >=0.01) normalization, no EMA (eval best-val
+# raw weights), episode-weighted sampling. Residual deviations from the reference
+# are tracked in docs/deferred_work.md. Note n=400 is below ACT's data regime, so
+# the absolute number here is development-tier; checkpoint selection picks the peak.
+observation:
+  mode: state
+  history: 1
+  include_previous_action: false
+
+action:
+  prediction_horizon: 16     # chunk_size (num_queries), task-matched to the PushT / DP horizon
+  execution_horizon: 8
+
+model:
+  type: act
+  hidden_dim: 512
+  latent_dim: 32
+  n_heads: 8
+  n_encoder_layers: 4
+  n_decoder_layers: 7
+  dim_feedforward: 3200
+  dropout: 0.1
+  pos_embedding: sinusoidal
+  arch: detr                 # DETR-VAE layers: ReLU, post-norm, zero-target decoder w/ injected query pos
+
+act:
+  kl_weight: 10.0
+
+normalization_method: standardize
+
+training:
+  seed: 0
+  batch_size: 64
+  learning_rate: 0.00001     # canonical ACT lr (1e-5)
+  weight_decay: 0.0001
+  use_ema: false             # canonical ACT evaluates best-val raw weights
+  gradient_clip_norm: 1.0
+  val_fraction: 0.1
+  split_seed: 0
+  mask_padded_actions: true
+  episode_sampling: true               # reference ACT: 1 random-start window per episode per epoch
+  max_epochs: 3000                     # epoch == #episodes here (episode_sampling); ~15k steps @ batch 64
+  checkpoint_every: 500                # periodic snapshots for screening-based selection
+  log_every: 50
+  eval_every: 1000

@@ -75,7 +75,20 @@ class ReplanningSystemBase:
         self.include_previous_action = meta.include_previous_action
         self.candidate_root_seed = int(candidate_root_seed)
         self._action_dim = int(meta.action_dim)
+        # Index of the first executed action within a proposed chunk. 0 for the
+        # future-only window; H_o-1 for the Diffusion-Policy window alignment
+        # (the chunk includes H_o-1 past-aligned actions before the action for t).
+        self.execution_offset = 0
         self._reset_state(episode_seed=0)
+
+    def set_execution_offset(self, offset: int) -> None:
+        offset = int(offset)
+        if not 0 <= offset or offset + self.action_horizon > self.prediction_horizon:
+            raise ValueError(
+                f"execution_offset {offset} + action_horizon {self.action_horizon} "
+                f"must fit within prediction_horizon {self.prediction_horizon}"
+            )
+        self.execution_offset = offset
 
     # -- AutonomySystem ------------------------------------------------------
     def reset(self, *, episode_seed: int) -> None:
@@ -199,7 +212,8 @@ class ReplanningSystemBase:
         record: dict = {"replan_index": self._replan_index, "episode_seed": self.episode_seed}
         candidates, selected, h_a = self._decide(ctx, record)
         chunk = candidates[selected].detach().cpu().numpy().astype(np.float32)
-        for a in chunk[:h_a]:
+        off = self.execution_offset
+        for a in chunk[off : off + h_a]:
             self._queue.append(a.copy())
             self._executed.append(a.copy())
         self._replan_index += 1
@@ -282,6 +296,12 @@ def check_same_data(policy, components: list, *, require_same_dataset_hash: bool
                     "state_dim", "action_dim"):
             if cm.get(key) != getattr(pm, key):
                 problems.append(f"{key}: policy {getattr(pm, key)} != component {cm.get(key)}")
+        # Chunk window alignment must match: a scorer trained on future-only
+        # positive chunks cannot rank diffusion-policy-aligned candidate chunks.
+        pa = pm.extra.get("window_alignment", "future_only")
+        ca = (cm.get("extra") or {}).get("window_alignment", "future_only")
+        if ca != pa:
+            problems.append(f"window_alignment: policy {pa} != component {ca}")
         if problems:
             raise ValueError(
                 "Component/policy same-data contract violated:\n  - " + "\n  - ".join(problems)

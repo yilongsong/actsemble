@@ -76,6 +76,15 @@ winner is re-saved as `selected_policy.pt` with the complete screening +
 confirmation history, panels, rule, training seed/budget, generator map,
 and git commit embedded in its metadata (§17).
 
+**Record the SELECTED epoch per config.** The `max_epochs` budget is only a
+cap; the epoch that actually wins is what characterizes a (model × dataset ×
+task). Every `train_config.json` records `steps_per_epoch` / `total_steps`, and
+the multi-family driver [scripts/overnight_canonical.py](../scripts/overnight_canonical.py)
+records `selected_step` / `selected_epoch` plus the full screening
+success-vs-epoch curve in `overnight_{family}.json` — so the winning budget is
+auditable and comparable across policies (a big model may peak early, a small
+one late), and never conflated with the cap.
+
 ## Dataset-size selection (§7) — `scripts/select_dataset_size.py`
 
 Nested deterministic subsets: one seeded permutation of all source

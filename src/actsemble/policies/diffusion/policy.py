@@ -35,11 +35,18 @@ def build_model(policy_cfg: dict, meta: PolicyMeta) -> ConditionalUnet1d:
         channels=tuple(model_cfg.get("channels", [128, 256, 512])),
         diffusion_embedding_dim=int(model_cfg.get("diffusion_embedding_dim", 128)),
         kernel_size=int(model_cfg.get("kernel_size", 5)),
+        cond_predict_scale=bool(model_cfg.get("cond_predict_scale", False)),
     )
 
 
 def build_scheduler(policy_cfg: dict) -> DiffusionScheduler:
     dcfg = policy_cfg.get("diffusion", {})
+    pred_type = str(dcfg.get("prediction_type", "epsilon"))
+    if pred_type != "epsilon":
+        raise NotImplementedError(
+            f"prediction_type={pred_type!r} is not implemented; the trainer and sampler "
+            "are epsilon-prediction only. Remove the key or set it to 'epsilon'."
+        )
     return DiffusionScheduler(
         num_train_steps=int(dcfg.get("training_steps", 100)),
         schedule=str(dcfg.get("beta_schedule", "cosine")),

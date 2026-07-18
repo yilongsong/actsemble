@@ -148,7 +148,11 @@ class TemporalEnsembleSystem(ReplanningSystemBase):
         return RobotAction(value=action)
 
     def _covers(self, t: int) -> bool:
-        return any(0 <= t - origin < self.window for origin, _ in self._plan_cache)
+        off = self.execution_offset
+        return any(
+            0 <= t - origin < self.window and off + (t - origin) < self.prediction_horizon
+            for origin, _ in self._plan_cache
+        )
 
     def _cache_plan(self) -> None:
         ctx = self._context()
@@ -166,11 +170,13 @@ class TemporalEnsembleSystem(ReplanningSystemBase):
         self._replan_index += 1
 
     def _emit(self, t: int) -> np.ndarray:
+        off = self.execution_offset
         preds, ages = [], []
         for origin, chunk in reversed(self._plan_cache):  # freshest first
             age = t - origin
-            if 0 <= age < self.window:
-                preds.append(chunk[age])
+            idx = off + age  # DP-aligned chunks put the action for the origin step at index off
+            if 0 <= age < self.window and idx < self.prediction_horizon:
+                preds.append(chunk[idx])
                 ages.append(age)
         self._ensemble_sizes.append(len(preds))
         return aggregate_predictions(
