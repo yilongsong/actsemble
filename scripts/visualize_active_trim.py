@@ -7,7 +7,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 OUT = "outputs/data_analysis"
-stats = json.loads(Path(f"{OUT}/pushonly_stats.json").read_text())
+stats = json.loads(Path(f"{OUT}/active_stats.json").read_text())
 info = {d["episode_id"]: d for d in stats["per_episode"]}
 
 full = h5py.File("data/push_t_pilot.h5", "r")["episodes"]

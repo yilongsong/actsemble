@@ -18,7 +18,7 @@ captured = (verifier − candidate_zero) / headroom.
   analyze                                 # merge shards + pair vs cz/verifier
 
 NOT the frozen protocol — a diagnostic upper bound that uses privileged sim
-access. Reuses the hold-trimmed policy/verifier under outputs/pushonly_min.
+access. Reuses the hold-trimmed policy/verifier under outputs/active_min.
 """
 from __future__ import annotations
 
@@ -39,17 +39,17 @@ from actsemble.sim.action_adapter import ActionAdapter  # noqa: E402
 from actsemble.sim.env_factory import make_env  # noqa: E402
 from actsemble.sim.observation_adapter import ObservationAdapter  # noqa: E402
 from actsemble.types import RobotAction  # noqa: E402
-from actsemble.evaluation.panels import Panel, panel_episodes  # noqa: E402
+from actsemble.evaluation.panels import Panel, make_panel, panel_episodes  # noqa: E402
 from actsemble.utils.serialization import load_json, save_json  # noqa: E402
 
-POLICY = REPO / "outputs/pushonly_min/policy_seed_0/selected_policy.pt"
-VERIF = REPO / "outputs/pushonly_min/verifier_seed_0/selected_verifier.pt"
-OUT = REPO / "outputs/pushonly_min/oracle"
-PANEL = Panel(name="pushonly_min_compare", env_seed=20000, num_episodes=300)  # same as compare
+POLICY = REPO / "outputs/active_min/policy_seed_0/selected_policy.pt"
+VERIF = REPO / "outputs/active_min/verifier_seed_0/selected_verifier.pt"
+OUT = REPO / "outputs/active_min/oracle"
+PANEL = make_panel("diagnostic")  # registered diagnostic bench (root 20000, 300 eps)
 K = 16
 MAX_STEPS = 100
-CZ_JSON = REPO / "outputs/pushonly_min/compare/candidate_zero.json"
-VE_JSON = REPO / "outputs/pushonly_min/compare/verifier_argmax.json"
+CZ_JSON = REPO / "outputs/active_min/compare/candidate_zero.json"
+VE_JSON = REPO / "outputs/active_min/compare/verifier_argmax.json"
 
 
 def _clone(x):

@@ -29,6 +29,12 @@ perturbation seed derived from the panel root:
 | integration | 4500 | 10 | implementation checking | selection, tuning, claims |
 | final_test | 1000 | 500/seed | **reported results only** | any decision whatsoever |
 | dataset_size_development | 5500 | 200 | choosing n_demos | the final test |
+| diagnostic | 20000 | 300 | oracle headroom, pass@k, selector development (non-protocol) | **any claim** |
+
+The `diagnostic` panel lives in `DIAGNOSTIC_PANELS` (outside `DEFAULT_PANELS`,
+so the frozen protocol is unchanged) and is checked disjoint from every
+protocol bank; it backs privileged / upper-bound diagnostics and never
+produces a reported result.
 
 `assert_panels_disjoint` verifies pairwise disjointness **and**
 disjointness from the demonstration-generation seeds (read from the

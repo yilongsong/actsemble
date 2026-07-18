@@ -53,7 +53,7 @@ report = {"n_episodes": len(rows), "kmax": KMAX,
           "episodes_with_zero_success": int((M.sum(axis=1) == 0).sum()),
           "episodes_with_all16_success": int((M.sum(axis=1) == 16).sum()),
           "rows": rows}
-out = REPO / "outputs/pushonly_min/oracle/passk.json"
+out = REPO / "outputs/active_min/oracle/passk.json"
 save_json(report, out)
 print("\n=== pass@k (independent clean rollouts, no branching) ===")
 for k, v in curve.items():

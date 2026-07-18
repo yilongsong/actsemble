@@ -15,6 +15,7 @@ from actsemble.systems.consensus_selection import (
     ConsensusSelectionSystem,
     build_selector,
 )
+from actsemble.systems.context import DecisionContext
 
 SELECTORS = [
     "full_chunk_medoid",
@@ -68,7 +69,12 @@ def run(system, candidates):
     cand = torch.as_tensor(candidates, dtype=torch.float32)
     valid = torch.isfinite(cand).all(dim=(1, 2))
     record = {}
-    idx = system._select(cand, valid, np.zeros((2, 1), dtype=np.float32), record)
+    ctx = DecisionContext(
+        observation_history=np.zeros((2, 1), dtype=np.float32),
+        executed_actions=np.zeros((0, cand.shape[-1]), dtype=np.float32),
+        replan_index=0, policy=system.policy,
+    )
+    idx = system._select(cand, None, valid, ctx, record)
     return idx, record, cand
 
 

@@ -15,6 +15,10 @@ Panel roles:
 * final_test     — reported results; evaluated only after system freezing;
 * dataset_size_development — dataset-size selection (§7); disjoint from
                    the final test.
+
+Diagnostic panels (``DIAGNOSTIC_PANELS``) live outside the frozen protocol
+and never produce claims (oracle headroom, pass@k, selector development);
+they are still checked disjoint from every protocol bank.
 """
 
 from __future__ import annotations
@@ -30,6 +34,18 @@ DEFAULT_PANELS = {
     "final_test": {"env_seed": 1000, "num_episodes": 500},
     "dataset_size_development": {"env_seed": 5500, "num_episodes": 200},
 }
+
+# Diagnostic panels are NOT part of the frozen protocol and never produce a
+# claim. They back privileged / upper-bound diagnostics (oracle headroom,
+# pass@k, quick selector development). Kept out of DEFAULT_PANELS so the
+# protocol's frozen-spec panel set is unchanged, but registered here so
+# make_panel resolves them and assert_panels_disjoint can guard them against
+# the protocol banks (and the demonstration seeds).
+DIAGNOSTIC_PANELS = {
+    "diagnostic": {"env_seed": 20000, "num_episodes": 300},
+}
+
+ALL_PANELS = {**DEFAULT_PANELS, **DIAGNOSTIC_PANELS}
 
 
 @dataclass(frozen=True)
@@ -51,7 +67,7 @@ class PanelEpisode:
 
 
 def make_panel(name: str, spec: dict | None = None) -> Panel:
-    spec = spec if spec is not None else DEFAULT_PANELS[name]
+    spec = spec if spec is not None else ALL_PANELS[name]
     return Panel(name=name, env_seed=int(spec["env_seed"]), num_episodes=int(spec["num_episodes"]))
 
 

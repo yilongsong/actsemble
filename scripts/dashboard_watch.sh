@@ -8,8 +8,8 @@
 set -u
 REPO=/home/yilong/actsemble
 PY=/home/yilong/miniconda3/envs/actsemble/bin/python
-OD="$REPO/outputs/pushonly_min/oracle"
-WATCH_DIRS=("$OD/capture" "$REPO/outputs/pushonly_min/compare" "$OD/videos" "$REPO/dashboard/captures")
+OD="$REPO/outputs/active_min/oracle"
+WATCH_DIRS=("$OD/capture" "$REPO/outputs/active_min/compare" "$OD/videos" "$REPO/dashboard/captures")
 INTERVAL=${1:-90}
 MAXSEC=${2:-36000}
 start=$(date +%s)

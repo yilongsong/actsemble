@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
+from actsemble.systems.context import DecisionContext
 from actsemble.systems.verifier_ensemble import MeanScoreRerankingActsemble
 
 
@@ -41,7 +42,12 @@ def _run(components, K=4):
     cand = torch.zeros(K, 16, 6)
     valid = torch.ones(K, dtype=torch.bool)
     rec = {}
-    idx = system._select(cand, valid, np.zeros((2, 31), dtype=np.float32), rec)
+    ctx = DecisionContext(
+        observation_history=np.zeros((2, 31), dtype=np.float32),
+        executed_actions=np.zeros((0, 6), dtype=np.float32),
+        replan_index=0, policy=system.policy,
+    )
+    idx = system._select(cand, None, valid, ctx, rec)
     return idx, rec
 
 

@@ -39,11 +39,11 @@ class MeanScoreRerankingActsemble(ReplanningSystemBase):
     def components(self) -> list:
         return self._components
 
-    def _select(self, candidates: torch.Tensor, valid: torch.Tensor,
-                history: np.ndarray, record: dict) -> int:
+    def _select(self, candidates: torch.Tensor, scores, valid: torch.Tensor,
+                ctx, record: dict) -> int:
         t0 = time.perf_counter()
         try:
-            hist_t = torch.from_numpy(np.ascontiguousarray(history))
+            hist_t = torch.from_numpy(np.ascontiguousarray(ctx.observation_history))
             per_verifier = []
             for c in self._components:
                 s = c.score(hist_t, candidates)

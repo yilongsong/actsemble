@@ -5,10 +5,10 @@ hold once the ~63% holding tail is removed.
 NOT the frozen protocol: ONE policy seed, ONE verifier seed, small panels, no
 8-candidate confirmation (checkpoint picked by the 50-ep screening panel). The
 goal is a rough image, not a decisive number. All artifacts live under
-outputs/pushonly_min / data/pushonly_min; Phase 0A is never touched.
+outputs/active_min / data/active_min; Phase 0A is never touched.
 
 Stages (each idempotent; `all` runs them in order with a sanity gate):
-  subset          nested n=400 subset of data/push_t_pushonly.h5 (same 400
+  subset          nested n=400 subset of data/push_t_active.h5 (same 400
                   underlying episodes as Phase 0A n=400, just hold-trimmed)
   train-policy    train one policy (seed 0), screen, pick best checkpoint
   sanity          200-ep dev eval of the picked policy -> base success (GATE)
@@ -36,17 +36,17 @@ from actsemble.data.writer import write_dataset, write_private_provenance  # noq
 from actsemble.sim.env_factory import make_env  # noqa: E402
 from actsemble.utils.serialization import load_json, save_json  # noqa: E402
 
-SRC = REPO / "data" / "push_t_pushonly.h5"
+SRC = REPO / "data" / "push_t_active.h5"
 N, SEED = 400, 0
-OUT = REPO / "outputs" / "pushonly_min"
-DATA = REPO / "data" / "pushonly_min"
+OUT = REPO / "outputs" / "active_min"
+DATA = REPO / "data" / "active_min"
 SUBSET = DATA / f"subset_{N:04d}.h5"
 POLICY_DIR = OUT / f"policy_seed_{SEED}"
 VERIF_DIR = OUT / f"verifier_seed_{SEED}"
 SEL_POLICY = POLICY_DIR / "selected_policy.pt"
 SEL_VERIF = VERIF_DIR / "selected_verifier.pt"
 SANITY_FLOOR = 0.20  # dev success below this => halt (push-only pipeline broken)
-COMPARE_PANEL = {"name": "pushonly_min_compare", "env_seed": 20000, "num_episodes": 300}
+COMPARE_PANEL = {"name": "active_min_compare", "env_seed": 20000, "num_episodes": 300}
 MAX_STEPS = 30000  # same recipe as Phase 0A; screening picks the best checkpoint
 
 SPEC = load_config(REPO / "outputs" / "phase0a_v1" / "experiment_spec.yaml")
@@ -85,7 +85,7 @@ def cmd_subset(args):
                            "subset_selected_ids": ids})
     h = write_dataset(SUBSET, episodes, new_meta)
     write_private_provenance(SUBSET, {
-        "success_only": True, "conversion_method": "subset_of_pushonly",
+        "success_only": True, "conversion_method": "subset_of_active",
         "source": {"subset_of": str(SRC), "subset_of_hash": meta.dataset_hash},
         "exported_episodes": [{"episode_id": i, "source_success": True,
                                "projected_success_at_end": True} for i in ids],

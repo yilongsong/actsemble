@@ -34,6 +34,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from actsemble.evaluation.metrics import wilson_interval  # noqa: E402
+from actsemble.evaluation.panels import make_panel  # noqa: E402
 from actsemble.utils.serialization import load_json  # noqa: E402
 
 DASH = REPO / "dashboard"
@@ -175,9 +176,9 @@ def video_index(video_dir, suffix):
 def cmd_build(args):
     DASH.mkdir(exist_ok=True)
     vids_out = DASH / "videos"; vids_out.mkdir(exist_ok=True)
-    cap = REPO / "outputs/pushonly_min/oracle/capture"
-    cmp = REPO / "outputs/pushonly_min/compare"
-    vdir = REPO / "outputs/pushonly_min/oracle/videos"
+    cap = REPO / "outputs/active_min/oracle/capture"
+    cmp = REPO / "outputs/active_min/compare"
+    vdir = REPO / "outputs/active_min/oracle/videos"
 
     # video maps (copy referenced videos into dashboard/videos/)
     copied = {}
@@ -270,7 +271,7 @@ def cmd_build(args):
         "title": args.title or "Selection headroom — candidate_zero → verifier → Oracle@16 "
                                "(PushT-v1, hold-trimmed data)",
         "created": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "panel": {"name": "pushonly_min_compare", "env_seed": 20000, "num_episodes": 300},
+        "panel": make_panel("diagnostic").to_dict(),
         "goal_xy": goal_xy, "goal_tolerance": 0.05, "world": WORLD,
         "failure_taxonomy": FAILURE_TAXONOMY, "mode_order": MODE_ORDER,
         "systems": systems, "contrasts": contrasts, "highlights": highlights,
@@ -335,8 +336,9 @@ def cmd_record(args):
     obs_ad = ObservationAdapter(action_dim=policy.meta.action_dim)
     act_ad = ActionAdapter(np.asarray(u.single_action_space.low, np.float32),
                            np.asarray(u.single_action_space.high, np.float32))
-    panel = Panel(name="pushonly_min_compare", env_seed=20000, num_episodes=int(args.count))
-    vdir = REPO / "outputs/pushonly_min/oracle/videos"; vdir.mkdir(parents=True, exist_ok=True)
+    diag = make_panel("diagnostic")
+    panel = Panel(diag.name, diag.env_seed, int(args.count))
+    vdir = REPO / "outputs/active_min/oracle/videos"; vdir.mkdir(parents=True, exist_ok=True)
     (DASH / "captures").mkdir(parents=True, exist_ok=True)
 
     def img():

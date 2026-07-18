@@ -274,8 +274,8 @@ class ConsensusSelectionSystem(ReplanningSystemBase):
             w = None
         self._dist = ChunkDistance(self.prediction_horizon, policy.meta.action_dim, w)
 
-    def _select(self, candidates: torch.Tensor, valid: torch.Tensor,
-                history: np.ndarray, record: dict) -> int:
+    def _select(self, candidates: torch.Tensor, scores, valid: torch.Tensor,
+                ctx, record: dict) -> int:
         t0 = time.perf_counter()
         record["selector_type"] = self.selector.name
         valid_np = valid.detach().cpu().numpy().astype(bool)

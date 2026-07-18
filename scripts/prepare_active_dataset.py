@@ -27,8 +27,8 @@ CORRECTNESS (see docstring of each step):
      arrive-and-stop instead of overshooting.
 
 Usage:
-    python scripts/prepare_pushonly_dataset.py \
-        --source data/push_t_pilot.h5 --output data/push_t_pushonly.h5 \
+    python scripts/prepare_active_dataset.py \
+        --source data/push_t_pilot.h5 --output data/push_t_active.h5 \
         --settle-steps 5
 """
 from __future__ import annotations
@@ -82,7 +82,7 @@ def per_step_coverage(source, env, n_episodes) -> tuple[list[np.ndarray], list[n
         coverages.append(cov)
         obj_poses.append(objp)
         if (i + 1) % 100 == 0:
-            print(f"[pushonly] coverage recompute {i + 1}/{n_episodes}", flush=True)
+            print(f"[active] coverage recompute {i + 1}/{n_episodes}", flush=True)
     return coverages, obj_poses
 
 
@@ -131,7 +131,7 @@ def trim_episode(ep, cov, reach_thresh, hold_floor, settle, min_keep):
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--source", default="data/push_t_pilot.h5")
-    ap.add_argument("--output", default="data/push_t_pushonly.h5")
+    ap.add_argument("--output", default="data/push_t_active.h5")
     ap.add_argument("--settle-steps", type=int, default=5,
                     help="states kept after the block last left the goal (arrive-and-stop margin)")
     ap.add_argument("--reach-thresh", type=float, default=0.90,
@@ -140,14 +140,14 @@ def main() -> int:
                     help="coverage below this = block meaningfully off-goal (kept, not hold)")
     ap.add_argument("--min-keep", type=int, default=8,
                     help="floor on kept actions per episode")
-    ap.add_argument("--stats-out", default="outputs/data_analysis/pushonly_stats.json")
+    ap.add_argument("--stats-out", default="outputs/data_analysis/active_stats.json")
     args = ap.parse_args()
 
     src_reader = DatasetReader(args.source)
     meta = src_reader.metadata
     episodes = list(src_reader.episodes)  # ep_00000.. in id order
     n = len(episodes)
-    print(f"[pushonly] source: {args.source}  ({n} episodes, "
+    print(f"[active] source: {args.source}  ({n} episodes, "
           f"{src_reader.num_transitions} transitions, hash {meta.dataset_hash[:12]})")
 
     task_id, ctrl, backend = meta.task_id, meta.controller, meta.simulation_backend
@@ -156,7 +156,7 @@ def main() -> int:
     env = make_env(task_id=task_id, control_mode=ctrl, sim_backend=backend,
                    obs_mode="state", render_mode=None)
 
-    print("[pushonly] recomputing per-step goal coverage via state projection...")
+    print("[active] recomputing per-step goal coverage via state projection...")
     coverages, obj_poses = per_step_coverage(src, env, n)
     env.close()
     if len(coverages) != n:
@@ -168,7 +168,7 @@ def main() -> int:
     for ep, objp in zip(episodes, obj_poses):
         frozen = np.concatenate([ep.state[:, 24:31], ep.next_state[-1:, 24:31]], axis=0)
         max_mismatch = max(max_mismatch, float(np.abs(objp - frozen).max()))
-    print(f"[pushonly] frozen<->reprojected obj_pose max|Δ| = {max_mismatch:.2e} (0 => exact alignment)")
+    print(f"[active] frozen<->reprojected obj_pose max|Δ| = {max_mismatch:.2e} (0 => exact alignment)")
     if max_mismatch > 1e-4:
         raise SystemExit(f"alignment check failed ({max_mismatch:.2e}); refusing to trim")
     if not all(c[-1] >= args.reach_thresh for c in coverages):
@@ -185,9 +185,9 @@ def main() -> int:
     n_after = int(sum(i["kept_length"] for i in infos))
     n_recovery = int(sum(i["recovery"] for i in infos))
     n_short = int(sum(i["below_train_window_18"] for i in infos))
-    print(f"[pushonly] transitions {n_before} -> {n_after} "
+    print(f"[active] transitions {n_before} -> {n_after} "
           f"(removed {n_before - n_after} = {100*(n_before-n_after)/n_before:.1f}%)")
-    print(f"[pushonly] recovery episodes preserved: {n_recovery}; kept<18 steps: {n_short}")
+    print(f"[active] recovery episodes preserved: {n_recovery}; kept<18 steps: {n_short}")
 
     # ---- metadata for the derived dataset ----
     new_meta = DatasetMetadata(
@@ -240,13 +240,13 @@ def main() -> int:
 
     ds_hash = write_dataset(args.output, trimmed, new_meta)
     write_private_provenance(args.output, provenance)
-    print(f"[pushonly] wrote {args.output}  hash {ds_hash[:12]}")
+    print(f"[active] wrote {args.output}  hash {ds_hash[:12]}")
 
-    print("[pushonly] validating derived dataset...")
+    print("[active] validating derived dataset...")
     reader = DatasetReader(args.output)
     summary = validate_dataset(reader)
     validate_success_only_provenance(args.output)
-    print(f"[pushonly] validation OK: {summary['num_episodes']} eps, "
+    print(f"[active] validation OK: {summary['num_episodes']} eps, "
           f"{summary['num_transitions']} transitions, "
           f"len[min={summary['episode_length_min']}, mean={summary['episode_length_mean']:.1f}, "
           f"max={summary['episode_length_max']}]")
@@ -261,7 +261,7 @@ def main() -> int:
         "recovery_episodes": n_recovery, "kept_below_18": n_short,
         "per_episode": infos,
     }, indent=2))
-    print(f"[pushonly] stats -> {args.stats_out}")
+    print(f"[active] stats -> {args.stats_out}")
     return 0
 
 

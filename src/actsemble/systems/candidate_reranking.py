@@ -45,11 +45,12 @@ class CandidateRerankingActsemble(ReplanningSystemBase):
     def components(self) -> list:
         return [self.component]
 
-    def _select(self, candidates: torch.Tensor, valid: torch.Tensor, history: np.ndarray, record: dict) -> int:
+    def _select(self, candidates: torch.Tensor, scores, valid: torch.Tensor,
+                ctx, record: dict) -> int:
         t0 = time.perf_counter()
         try:
             scores = self.component.score(
-                torch.from_numpy(np.ascontiguousarray(history)), candidates
+                torch.from_numpy(np.ascontiguousarray(ctx.observation_history)), candidates
             )
             record["component_latency_s"] = time.perf_counter() - t0
             if scores.shape != (self.num_candidates,):

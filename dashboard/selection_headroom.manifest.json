@@ -2,9 +2,9 @@
  "schema_version": "1.0",
  "experiment": "selection_headroom",
  "title": "Selection headroom \u2014 candidate_zero \u2192 verifier \u2192 Oracle@16 (PushT-v1, hold-trimmed data)",
- "created": "2026-07-17 03:59",
+ "created": "2026-07-17 12:34",
  "panel": {
-  "name": "pushonly_min_compare",
+  "name": "diagnostic",
   "env_seed": 20000,
   "num_episodes": 300
  },

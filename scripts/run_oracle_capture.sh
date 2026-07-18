@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Full-300 CORRECTED rollout-oracle capture (two-env, elapsed-reset fixes).
 # Two GPUs, resumable, low-index-first. Each chunk writes a rich capture file
-# outputs/pushonly_min/oracle/capture/oracle_SSSS_EEEE.json AS IT COMPLETES, so
+# outputs/active_min/oracle/capture/oracle_SSSS_EEEE.json AS IT COMPLETES, so
 # the live dashboard (scripts/dashboard_watch.sh) fills in as the run proceeds.
 #
 # Resumable: cmd_capture skips a chunk whose output already exists, so re-running
@@ -9,7 +9,7 @@
 set -u
 REPO=/home/yilong/actsemble
 PY=/home/yilong/miniconda3/envs/actsemble/bin/python
-OD="$REPO/outputs/pushonly_min/oracle"
+OD="$REPO/outputs/active_min/oracle"
 CHUNK=${CHUNK:-15}
 TOTAL=${TOTAL:-300}
 

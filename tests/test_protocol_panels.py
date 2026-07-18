@@ -3,10 +3,13 @@
 import pytest
 
 from actsemble.evaluation.panels import (
+    ALL_PANELS,
     DEFAULT_PANELS,
+    DIAGNOSTIC_PANELS,
     Panel,
     assert_panels_disjoint,
     load_panels,
+    make_panel,
     panel_episodes,
 )
 
@@ -55,3 +58,15 @@ def test_same_root_would_collide():
         assert_panels_disjoint(
             {"a": Panel("a", 42, 10), "b": Panel("b", 42, 10)}
         )
+
+
+def test_diagnostic_panel_resolves_and_is_disjoint_from_protocol():
+    # diagnostic panels are registered outside DEFAULT_PANELS (protocol
+    # untouched) but resolve via make_panel and are guarded against every
+    # protocol bank.
+    assert "diagnostic" not in DEFAULT_PANELS
+    p = make_panel("diagnostic")
+    assert p.env_seed == 20000 and p.num_episodes == 300
+    all_panels = {name: make_panel(name) for name in ALL_PANELS}
+    assert set(DIAGNOSTIC_PANELS) <= set(all_panels)
+    assert_panels_disjoint(all_panels)  # protocol ∪ diagnostic, pairwise disjoint

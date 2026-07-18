@@ -11,7 +11,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-OUT = Path("outputs/pushonly_min/oracle/capture")
+OUT = Path("outputs/active_min/oracle/capture")
 FIG = Path("outputs/data_analysis")
 FIG.mkdir(parents=True, exist_ok=True)
 GOAL_YAW = (5 / 3) * np.pi

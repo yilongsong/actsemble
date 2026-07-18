@@ -29,6 +29,7 @@ import torch
 from ..policies.interface import ActionChunkPolicy
 from ..seed import derive_seed
 from ..types import RobotAction, StateObservation
+from .context import DecisionContext
 
 
 def candidate_tensor_hash(candidates: torch.Tensor) -> str:
@@ -73,6 +74,7 @@ class ReplanningSystemBase:
             )
         self.include_previous_action = meta.include_previous_action
         self.candidate_root_seed = int(candidate_root_seed)
+        self._action_dim = int(meta.action_dim)
         self._reset_state(episode_seed=0)
 
     # -- AutonomySystem ------------------------------------------------------
@@ -121,6 +123,7 @@ class ReplanningSystemBase:
         self.episode_seed = int(episode_seed)
         self._history: deque[np.ndarray] = deque(maxlen=self.obs_horizon)
         self._queue: deque[np.ndarray] = deque()
+        self._executed: list[np.ndarray] = []  # committed actions (past coherence — A5)
         self._replan_index = 0
         self._replan_records: list[dict] = []
 
@@ -149,53 +152,100 @@ class ReplanningSystemBase:
         )
         return self.policy.new_generator(seed)
 
+    def _context(self) -> DecisionContext:
+        """The shared per-decision context every stage receives
+        (systems/context.py; docs/system_architecture.md §2.2)."""
+        executed = (
+            np.stack(self._executed, axis=0)
+            if self._executed
+            else np.zeros((0, self._action_dim), dtype=np.float32)
+        )
+        return DecisionContext(
+            observation_history=self._observation_history(),
+            executed_actions=executed,
+            replan_index=self._replan_index,
+            policy=self.policy,
+            components=self.components(),
+        )
+
     def _replan(self) -> None:
-        history = self._observation_history()
+        # Base-pipeline stages (docs/system_architecture.md §2): Propose ->
+        # Predict -> Score -> Select -> Schedule. Subclasses override any seam;
+        # the defaults reproduce candidate-zero. §11 candidate identity lives in
+        # Propose, so any Score/Select swap keeps the K-tensor bitwise-identical.
+        ctx = self._context()
+        record: dict = {"replan_index": self._replan_index, "episode_seed": self.episode_seed}
+        candidates = self._propose(ctx, record)
+        valid = torch.isfinite(candidates).all(dim=(1, 2))
+        record["num_valid_candidates"] = int(valid.sum())
+        preds = self._predict(candidates, ctx)
+        scores = self._score(candidates, preds, valid, ctx, record)
+        selected = int(self._select(candidates, scores, valid, ctx, record))
+        record["selected_index"] = selected
+        self._replan_records.append(record)
+        h_a = int(self._schedule(candidates, selected, ctx))
+        chunk = candidates[selected].detach().cpu().numpy().astype(np.float32)
+        for a in chunk[:h_a]:
+            self._queue.append(a.copy())
+            self._executed.append(a.copy())
+        self._replan_index += 1
+
+    # -- stages: override any seam; defaults reproduce candidate-zero ----------
+    def _propose(self, ctx: DecisionContext, record: dict) -> torch.Tensor:
+        """Propose: sample the shared K-candidate tensor; record its §11 hash and
+        compact per-candidate diagnostics (mean |a|, mean |Δa|)."""
         t0 = time.perf_counter()
         candidates = self.policy.sample_action_chunks(
-            history, num_samples=self.num_candidates, generator=self._candidate_generator()
+            ctx.observation_history,
+            num_samples=self.num_candidates,
+            generator=self._candidate_generator(),
         )
-        policy_latency = time.perf_counter() - t0
+        record["policy_latency_s"] = time.perf_counter() - t0
         if candidates.shape != (
             self.num_candidates,
             self.prediction_horizon,
             candidates.shape[-1],
         ):
             raise RuntimeError(f"Bad candidate shape {tuple(candidates.shape)}")
-        valid = torch.isfinite(candidates).all(dim=(1, 2))
         with torch.no_grad():
-            # Compact per-candidate diagnostics (mean |a| and mean |Δa|),
-            # persisted so offline analysis can compare selected vs rejected
-            # chunks without storing full tensors.
-            cand_mean_abs = candidates.abs().mean(dim=(1, 2)).cpu().tolist()
-            cand_smoothness = (
+            record["candidate_mean_abs"] = candidates.abs().mean(dim=(1, 2)).cpu().tolist()
+            record["candidate_smoothness"] = (
                 (candidates[:, 1:] - candidates[:, :-1]).abs().mean(dim=(1, 2)).cpu().tolist()
             )
-        record: dict = {
-            "replan_index": self._replan_index,
-            "episode_seed": self.episode_seed,
-            "policy_latency_s": policy_latency,
-            "num_valid_candidates": int(valid.sum()),
-            "candidate_hash": candidate_tensor_hash(candidates),
-            "candidate_mean_abs": cand_mean_abs,
-            "candidate_smoothness": cand_smoothness,
-        }
-        selected = self._select(candidates, valid, history, record)
-        record["selected_index"] = int(selected)
-        self._replan_records.append(record)
-        chunk = candidates[selected].detach().cpu().numpy().astype(np.float32)
-        for a in chunk[: self.action_horizon]:
-            self._queue.append(a.copy())
-        self._replan_index += 1
+        record["candidate_hash"] = candidate_tensor_hash(candidates)
+        return candidates
 
-    def _select(
-        self,
-        candidates: torch.Tensor,
-        valid: torch.Tensor,
-        history: np.ndarray,
-        record: dict,
-    ) -> int:
-        raise NotImplementedError
+    def _predict(self, candidates: torch.Tensor, ctx: DecisionContext):
+        """Predict (optional, Track C): forecast candidate consequences. Default none."""
+        return None
+
+    def _score(self, candidates: torch.Tensor, preds, valid: torch.Tensor,
+               ctx: DecisionContext, record: dict):
+        """Score (optional): per-candidate scalar ``[K]`` (higher = better).
+        Return None to let Select fall through to candidate-zero."""
+        return None
+
+    def _select(self, candidates: torch.Tensor, scores, valid: torch.Tensor,
+                ctx: DecisionContext, record: dict) -> int:
+        """Select: choose the executed candidate index. Default = fallback-aware
+        argmax over ``scores`` (candidate-zero when scores are absent or all
+        invalid). A Score-then-argmax system need only implement ``_score``."""
+        if scores is None:
+            return 0
+        s = scores.detach().cpu()
+        mask = torch.isfinite(s) & valid.detach().cpu()
+        if not mask.any():
+            record["fallback"] = True
+            record["fallback_reason"] = "no_valid_scores"
+            return 0
+        masked = s.clone()
+        masked[~mask] = float("-inf")
+        return int(torch.argmax(masked).item())
+
+    def _schedule(self, candidates: torch.Tensor, selected: int, ctx: DecisionContext) -> int:
+        """Schedule: how many actions of the selected chunk to execute before
+        replanning. Default = the fixed action horizon."""
+        return self.action_horizon
 
 
 def check_same_data(policy, components: list, *, require_same_dataset_hash: bool = True) -> None:
