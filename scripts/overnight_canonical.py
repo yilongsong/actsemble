@@ -65,8 +65,9 @@ def run_family(
     final_n: int,
     max_steps: int,
     train_max_steps: int | None = None,
+    config_override: str | None = None,
 ) -> dict:
-    config_path = FAMILIES[family]
+    config_path = config_override or FAMILIES[family]
     cfg = load_config(str(REPO / config_path))
     trainer = policy_trainer(cfg)
     run_dir = out_root / family
@@ -192,7 +193,14 @@ def main() -> int:
         default=None,
         help="override the config training budget (for quick end-to-end tests)",
     )
+    ap.add_argument(
+        "--config",
+        default=None,
+        help="override the family's config path (ablation variants; single --family only)",
+    )
     args = ap.parse_args()
+    if args.config is not None and args.family == "all":
+        ap.error("--config requires a single --family")
 
     out_root = Path(args.out_root)
     out_root.mkdir(parents=True, exist_ok=True)
@@ -208,6 +216,7 @@ def main() -> int:
                 args.final_n,
                 args.max_steps,
                 args.train_max_steps,
+                args.config,
             )
         except Exception as exc:  # keep going so one failure doesn't waste the night
             failures[fam] = repr(exc)

@@ -1,0 +1,13 @@
+# PickCube-v1 pick-and-place pool: the OFFICIAL ManiSkill RL demonstration
+# bundle (rl/trajectory.none.pd_ee_delta_pose.physx_cuda.h5 — PPO teacher,
+# 1013 episodes, 100% success, reach then hold at goal until the 50-step
+# horizon). Same provenance pattern, control mode, and backend as the
+# PushT-v1 line. The hold tail is kept: PickCube success requires the robot
+# STATIC at goal, so holding frames are on-task (contrast PushT active-trim).
+# The bundle also ships pd_joint_delta_pos demos — a ready-made future cell
+# for the action-representation matrix on this task.
+task_id: PickCube-v1
+control_mode: pd_ee_delta_pose
+sim_backend: physx_cuda
+max_episodes: null
+seed: 0

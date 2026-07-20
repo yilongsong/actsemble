@@ -10,9 +10,11 @@ step, NO average):
   * act_openloop  — standalone, H_a = H_p = 16 (full chunk open-loop) = ACT "no TE"
   * act_te        — temporal, mean, recency=oldest, decay=0.01     = ACT temporal ensemble
   * act_latest    — temporal, latest (query every step, no average) = our decomposition point
+  * act_h8        — standalone, H_a = 8 (our benchmark cadence) = familiar anchor
 
 Reports ACT's claim (act_te vs act_openloop) AND our nuance (act_latest vs both).
-Diagnostic panel; ACT here is a lightweight variant (see docs/deferred_work.md).
+Diagnostic panel; the policy is whatever --policy-checkpoint provides (canonical
+DETR ACT for the pristine reproduction; the old default was the lightweight ACT).
 
 Usage:
     python scripts/replicate_act.py --count 300
@@ -36,12 +38,21 @@ from actsemble.policies.loader import load_policy  # noqa: E402
 from actsemble.utils.serialization import save_json  # noqa: E402
 from compare_temporal import mcnemar  # noqa: E402
 
+def openloop_horizon(meta) -> int:
+    """Full-chunk open-loop H_a: all executable actions after the execution
+    offset (DP-aligned chunks reserve the first H_o-1 slots -> H_p - (H_o-1);
+    future-only chunks -> H_p)."""
+    align = (getattr(meta, "extra", None) or {}).get("window_alignment", "future_only")
+    off = (meta.obs_horizon - 1) if align == "diffusion_policy" else 0
+    return int(meta.prediction_horizon) - off
+
+
 SYSTEMS = {
     "act_openloop": {
         "policy": {"num_candidates": 1},
         "components": [],
         "selection": {"type": "candidate_zero"},
-        "execution": {"action_horizon": 16},
+        "execution": {"action_horizon": 16},  # overwritten per-checkpoint in main()
     },
     "act_latest": {
         "policy": {"num_candidates": 1},
@@ -59,6 +70,12 @@ SYSTEMS = {
             "decay": 0.01,
         },
         "execution": {"replan_interval": 1},
+    },
+    "act_h8": {
+        "policy": {"num_candidates": 1},
+        "components": [],
+        "selection": {"type": "candidate_zero"},
+        "execution": {"action_horizon": 8},
     },
 }
 
@@ -89,6 +106,9 @@ def main() -> int:
         "perturbations": [],
     }
     policy = load_policy(args.policy_checkpoint, device=args.device, use_ema=True)
+    SYSTEMS["act_openloop"]["execution"]["action_horizon"] = openloop_horizon(policy.meta)
+    print(f"[replicate-act] openloop H_a = {SYSTEMS['act_openloop']['execution']['action_horizon']}"
+          f" (H_p {policy.meta.prediction_horizon}, alignment-derived offset)")
     env = make_env(
         task_id=policy.meta.task_id,
         control_mode=policy.meta.controller,

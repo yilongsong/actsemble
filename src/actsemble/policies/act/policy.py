@@ -29,6 +29,10 @@ def obs_feature_dim(meta: PolicyMeta) -> int:
 
 def build_act_model(policy_cfg: dict, meta: PolicyMeta) -> ACTModel:
     m = policy_cfg.get("model", {})
+    # Optional hard obs mask (e.g. qvel-blind falsifier). Lives in the policy
+    # config -> saved into every checkpoint -> rebuilt here at load, so train
+    # and inference apply the identical mask with no adapter/dataset changes.
+    mask_ranges = (policy_cfg.get("observation", {}) or {}).get("mask_feature_ranges")
     return ACTModel(
         obs_feature_dim=obs_feature_dim(meta),
         action_dim=meta.action_dim,
@@ -43,6 +47,7 @@ def build_act_model(policy_cfg: dict, meta: PolicyMeta) -> ACTModel:
         dropout=float(m.get("dropout", 0.1)),
         pos_embedding=str(m.get("pos_embedding", "learned")),
         arch=str(m.get("arch", "torch_builtin")),
+        obs_mask_ranges=mask_ranges,
     )
 
 

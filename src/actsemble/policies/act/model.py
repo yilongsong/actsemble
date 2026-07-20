@@ -138,6 +138,7 @@ class ACTModel(nn.Module):
         dropout: float = 0.1,
         pos_embedding: str = "learned",
         arch: str = "torch_builtin",
+        obs_mask_ranges: list | None = None,
     ):
         super().__init__()
         if pos_embedding not in ("learned", "sinusoidal"):
@@ -154,6 +155,30 @@ class ACTModel(nn.Module):
         self.prediction_horizon = int(prediction_horizon)
         self.hidden_dim = int(hidden_dim)
         self.latent_dim = int(latent_dim)
+
+        # Optional hard observation mask (ablation/falsifier runs): zero the
+        # listed [lo, hi) feature ranges wherever obs enters the model — the
+        # CVAE style encoder AND the decoder — so training and inference are
+        # velocity-blind (or whatever-blind) by construction. Indices refer to
+        # the obs feature vector (state first, previous action after, if any).
+        # Stored as a non-persistent buffer: rebuilt from the checkpoint config
+        # at load time, so old checkpoints (no key) load unchanged.
+        self.obs_mask_ranges: list[tuple[int, int]] = []
+        self.obs_feature_mask: torch.Tensor | None
+        if obs_mask_ranges:
+            mask = torch.ones(self.obs_feature_dim)
+            for rng in obs_mask_ranges:
+                lo, hi = int(rng[0]), int(rng[1])
+                if not (0 <= lo < hi <= self.obs_feature_dim):
+                    raise ValueError(
+                        f"obs_mask_ranges entry [{lo}, {hi}) out of bounds for "
+                        f"obs_feature_dim {self.obs_feature_dim}"
+                    )
+                mask[lo:hi] = 0.0
+                self.obs_mask_ranges.append((lo, hi))
+            self.register_buffer("obs_feature_mask", mask, persistent=False)
+        else:
+            self.obs_feature_mask = None
 
         # shared input embeddings
         self.obs_proj = nn.Linear(self.obs_feature_dim, hidden_dim)
@@ -254,6 +279,11 @@ class ACTModel(nn.Module):
                 nn.init.xavier_uniform_(lin.weight)
                 nn.init.zeros_(lin.bias)
 
+    def _mask_obs(self, obs: torch.Tensor) -> torch.Tensor:
+        if self.obs_feature_mask is None:
+            return obs
+        return obs * self.obs_feature_mask
+
     def encode_style(
         self,
         obs: torch.Tensor,
@@ -265,6 +295,7 @@ class ACTModel(nn.Module):
         ``action_mask`` ([B,H_p] bool, True = real) excludes padded (replicated
         terminal) action tokens from the style encoder's attention, so they do
         not pollute the latent posterior (canonical ACT)."""
+        obs = self._mask_obs(obs)
         b = obs.shape[0]
         tokens = torch.cat(
             [
@@ -296,6 +327,7 @@ class ACTModel(nn.Module):
 
     def decode(self, obs: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
         """[B,H_o,feat], [B,latent_dim] -> predicted action chunk [B,H_p,A]."""
+        obs = self._mask_obs(obs)
         b = obs.shape[0]
         if self.arch == "torch_builtin":
             memory = torch.cat(

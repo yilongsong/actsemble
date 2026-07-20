@@ -35,6 +35,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from actsemble.policies.diffusion.policy import DiffusionPolicy  # noqa: E402
+from actsemble.policies.loader import load_policy  # noqa: E402
 from actsemble.seed import derive_seed  # noqa: E402
 from actsemble.sim.action_adapter import ActionAdapter  # noqa: E402
 from actsemble.sim.env_factory import make_env  # noqa: E402
@@ -89,13 +90,21 @@ class OracleRollout:
 
     def __init__(
         self,
-        policy: DiffusionPolicy,
+        policy,
         env,
         benv,
         device,
         n_candidates=K,
         n_continuations=1,
+        authors=None,
     ):
+        """``authors``: optional list of {"p": policy, "slots": int, "tag": str}
+        for MIXED candidate pools (the ensemble-zoo arm). Each candidate is
+        authored by one policy; its branch is executed with that author's
+        alignment-derived offset and CONTINUED by the same author (the exact
+        generalization of the single-policy estimator, where author ==
+        continuation by construction). Default: one author = ``policy`` with
+        all K slots (bitwise-legacy behavior)."""
         self.p = policy
         self.env = env  # clean committed env (forward-only)
         self.benv = benv  # scratch branch env (restored freely)
@@ -105,6 +114,35 @@ class OracleRollout:
         self.M = int(
             n_continuations
         )  # Monte-Carlo continuations per candidate (variance axis)
+
+        def _author(p, slots, tag):
+            m = p.meta
+            align = (getattr(m, "extra", None) or {}).get(
+                "window_alignment", "future_only"
+            )
+            return {
+                "p": p,
+                "slots": int(slots),
+                "tag": tag,
+                "h_o": int(m.obs_horizon),
+                "off": int(m.obs_horizon - 1) if align == "diffusion_policy" else 0,
+                "ckpt": p.checkpoint_hash,
+            }
+
+        if authors is None:
+            self.authors = [_author(policy, self.K, "p0")]
+        else:
+            self.authors = [
+                _author(a["p"], a["slots"], a["tag"]) for a in authors
+            ]
+            if sum(a["slots"] for a in self.authors) != self.K:
+                raise ValueError(
+                    f"author slots {[a['slots'] for a in self.authors]} "
+                    f"must sum to K={self.K}"
+                )
+        h_as = {int(a["p"].meta.action_horizon) for a in self.authors}
+        if len(h_as) != 1:
+            raise ValueError(f"authors disagree on action_horizon: {h_as}")
         m = policy.meta
         self.h_o, self.h_a, self.h_p = (
             m.obs_horizon,
@@ -166,11 +204,12 @@ class OracleRollout:
         step = 0
         success_once = False
         ridx = 0
+        off0 = self.authors[0]["off"]
         while step < MAX_STEPS and not success_once:
             seed = derive_seed(int(policy_sampling_seed), "candidates", self.ckpt, ridx)
             chunk = self._sample(hist, 1, seed)[0]
             done = False
-            for a in chunk[: self.h_a]:
+            for a in chunk[off0 : off0 + self.h_a]:
                 s, sc, d = self._step(self.env, a)
                 hist.append(s)
                 obj_xy.append(s[24:26].copy())
@@ -215,22 +254,25 @@ class OracleRollout:
             .tolist(),
         }
 
-    def _sample(self, hist, num, seed):
-        win = _obs_window(hist, self.h_o)
-        gen = self.p.new_generator(seed)
-        c = self.p.sample_action_chunks(win, num_samples=num, generator=gen)
-        return c.detach().cpu().numpy().astype(np.float32)  # [num, h_p, 6]
+    def _sample(self, hist, num, seed, author=None):
+        a = author or self.authors[0]
+        win = _obs_window(hist, a["h_o"])
+        gen = a["p"].new_generator(seed)
+        c = a["p"].sample_action_chunks(win, num_samples=num, generator=gen)
+        return c.detach().cpu().numpy().astype(np.float32)  # [num, h_p, A]
 
-    def _continue(self, e, hist, step, cont_seed):
-        """Base policy (single-sample) to episode end IN env ``e`` (the scratch
-        branch env); returns (success, coverage, step)."""
+    def _continue(self, e, hist, step, cont_seed, author=None):
+        """Author policy (single-sample) to episode end IN env ``e`` (the
+        scratch branch env); returns (success, coverage, step)."""
+        author = author or self.authors[0]
+        off = author["off"]
         h = list(hist)
         succ = False
         ridx = 0
         while step < MAX_STEPS:
-            chunk = self._sample(h, 1, cont_seed + 7919 * ridx)[0]  # [h_p,6]
+            chunk = self._sample(h, 1, cont_seed + 7919 * ridx, author)[0]
             done = False
-            for a in chunk[: self.h_a]:
+            for a in chunk[off : off + self.h_a]:
                 s, sc, d = self._step(e, a)
                 h.append(s)
                 step += 1
@@ -268,13 +310,24 @@ class OracleRollout:
             # clean committed state to branch FROM (a read; does not perturb env)
             snap = _clone(self.u.get_state_dict())
             hist_snap = list(hist)
+            # mixed pool: each author contributes its slots; per-author seed
+            # streams stay independent via the checkpoint hash in derive_seed
+            cands, cand_auth = [], []
+            for auth in self.authors:
+                seed_a = derive_seed(
+                    int(policy_sampling_seed), "candidates", auth["ckpt"], replan_index
+                )
+                for c in self._sample(hist, auth["slots"], seed_a, auth):
+                    cands.append(c)
+                    cand_auth.append(auth)
             seed = derive_seed(
                 int(policy_sampling_seed), "candidates", self.ckpt, replan_index
             )
-            cands = self._sample(hist, self.K, seed)  # [K, h_p, 6]
             best_k, best_key = 0, (-1.0, -2.0)
             per_k_succ = []
             for k in range(self.K):
+                auth = cand_auth[k]
+                off = auth["off"]
                 if not np.isfinite(cands[k]).all():
                     per_k_succ.append(False)
                     continue
@@ -284,7 +337,7 @@ class OracleRollout:
                 st = step
                 sc = False
                 done = False
-                for a in cands[k][: self.h_a]:
+                for a in cands[k][off : off + self.h_a]:
                     s, s_ok, d = self._step(self.benv, a)
                     h.append(s)
                     st += 1
@@ -296,15 +349,21 @@ class OracleRollout:
                 if sc or done:  # chunk itself ended the episode
                     v_succ, v_cov = (1.0 if sc else 0.0), self._cov(self.benv)
                 else:
-                    # (2) Monte-Carlo: M base-policy continuations to the end.
-                    # Common random seeds across candidates (k-independent) both
-                    # reduce variance and isolate the candidate's own effect.
+                    # (2) Monte-Carlo: M continuations to the end by the
+                    # candidate's AUTHOR (single-policy case: the base policy —
+                    # bitwise-legacy). Common random seeds across candidates
+                    # (k-independent) reduce variance and isolate the
+                    # candidate's own effect.
                     post = _clone(self.bu.get_state_dict())
                     succs, covs = [], []
                     for mi in range(self.M):
                         self._set_benv(post)
                         s_m, c_m, _ = self._continue(
-                            self.benv, list(h), st, cont_seed=seed + 131 + 997 * mi
+                            self.benv,
+                            list(h),
+                            st,
+                            cont_seed=seed + 131 + 997 * mi,
+                            author=auth,
                         )
                         succs.append(1.0 if s_m else 0.0)
                         covs.append(c_m)
@@ -316,7 +375,8 @@ class OracleRollout:
             # commit winner's H_a actions on the CLEAN env (forward-only, no restore:
             # it is already at the committed state, untouched by the scratch branching)
             obj_before = hist_snap[-1][24:26].copy()
-            for a in cands[best_k][: self.h_a]:
+            w_auth = cand_auth[best_k]
+            for a in cands[best_k][w_auth["off"] : w_auth["off"] + self.h_a]:
                 exec_a.append(np.asarray(a, dtype=np.float32).copy())
                 s, sc, d = self._step(self.env, a)
                 hist.append(s)
@@ -331,11 +391,17 @@ class OracleRollout:
                 if success_once or d:
                     break
             moved_T = float(np.linalg.norm(hist[-1][24:26] - obj_before))
+            author_succ = {}
+            for k in range(min(len(per_k_succ), self.K)):
+                t = cand_auth[k]["tag"]
+                author_succ[t] = author_succ.get(t, 0) + int(per_k_succ[k])
             replans.append(
                 {
                     "replan_index": replan_index,
                     "selected_index": int(best_k),
+                    "selected_author": cand_auth[best_k]["tag"],
                     "n_branch_success": int(sum(per_k_succ)),
+                    "author_branch_success": author_succ,
                     "best_branch_success": bool(best_key[0]),
                     "changed_from_zero": bool(best_k != 0),
                     "obj_moved": moved_T,
@@ -391,16 +457,46 @@ def cmd_run(args):
     start, count = int(args.start), int(args.count)
     k, m = int(args.k), int(args.m)
     sel = eps[start : start + count]
-    dest = OUT / f"shard_{_tag(k, m)}{start:04d}_{start + count:04d}.json"
+    pre = f"{args.tag}_" if args.tag else ""
+    dest = OUT / f"shard_{pre}{_tag(k, m)}{start:04d}_{start + count:04d}.json"
     if dest.exists() and not args.force:
         print(f"[oracle] {dest.name} exists; skipping")
         return 0
-    policy = DiffusionPolicy.from_checkpoint(
-        str(POLICY), device=args.device or "cuda", use_ema=True
-    )
+    device = args.device or "cuda"
+    authors_meta = None
+    if args.policies:
+        paths = [p.strip() for p in args.policies.split(",")]
+        slots = (
+            [int(x) for x in args.slots.split(",")]
+            if args.slots
+            else [k // len(paths)] * len(paths)
+        )
+        if len(slots) != len(paths):
+            raise SystemExit("--slots must match --policies count")
+        k = sum(slots)
+        pols = [load_policy(p, device=device, use_ema=True) for p in paths]
+        tags = [Path(p).resolve().parent.name for p in paths]
+        authors = [
+            {"p": pol, "slots": s, "tag": t}
+            for pol, s, t in zip(pols, slots, tags)
+        ]
+        authors_meta = [
+            {"path": p, "tag": t, "slots": s, "ckpt": pol.checkpoint_hash}
+            for p, t, s, pol in zip(paths, tags, slots, pols)
+        ]
+        policy = pols[0]
+        dest = OUT / f"shard_{pre}{_tag(k, m)}{start:04d}_{start + count:04d}.json"
+        if dest.exists() and not args.force:
+            print(f"[oracle] {dest.name} exists; skipping")
+            return 0
+        print(f"[oracle] mixed pool K={k}: "
+              + ", ".join(f"{t}x{s}" for t, s in zip(tags, slots)), flush=True)
+    else:
+        policy = load_policy(str(POLICY), device=device, use_ema=True)
+        authors = None
     env, benv = _make_envs(policy)
     roll = OracleRollout(
-        policy, env, benv, args.device or "cuda", n_candidates=k, n_continuations=m
+        policy, env, benv, device, n_candidates=k, n_continuations=m, authors=authors
     )
     rows = []
     t0 = time.time()
@@ -423,6 +519,7 @@ def cmd_run(args):
             "count": len(sel),
             "num_candidates": k,
             "n_continuations": m,
+            "authors": authors_meta,
             "episodes": rows,
         },
         dest,
@@ -726,6 +823,21 @@ def main():
         "--seeds",
         default=None,
         help="video: comma-separated env_seeds (else auto-pick)",
+    )
+    p.add_argument(
+        "--policies",
+        default=None,
+        help="run: comma-separated checkpoint paths for a MIXED candidate pool "
+        "(ensemble-zoo arm); overrides the legacy single POLICY",
+    )
+    p.add_argument(
+        "--slots",
+        default=None,
+        help="run: comma-separated candidate counts per --policies entry "
+        "(sums to K; default = even split)",
+    )
+    p.add_argument(
+        "--tag", default=None, help="run: shard filename prefix (e.g. zoo, pristine_flow)"
     )
     p.add_argument("--device", default=None)
     p.add_argument("--force", action="store_true")

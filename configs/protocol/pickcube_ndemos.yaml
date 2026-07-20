@@ -1,0 +1,54 @@
+# PickCube-v1 dataset-size (n_demos) selection — protocol §7, DEV TIER.
+# Goal: find the n_demos operating point where the selected lightweight-DP
+# policy lands at ~50% success (target band [0.40, 0.60], centered on 0.50 —
+# unlike the PushT default's [0.25, 0.50]). 2 policy seeds for the search
+# pass; re-run with >= 5 seeds before any claim. candidate_sizes are nested
+# deterministic subsets of the 1100-episode RL demo pool (see
+# configs/data/pickcube.yaml); if no size lands in band, extend the list
+# (down to 5 or up past 100) and rerun — the driver reuses finished cells.
+experiment_version: pickcube_ndemos_v1
+
+dataset: data/pickcube/subset_SELECTED.h5   # filled after §7 selection
+policy_config: configs/policies/state_diffusion.yaml
+verifier_config: configs/components/action_chunk_compatibility.yaml
+
+policy_config_overrides:
+  training:
+    max_steps: 30000          # fixed budget, no early stopping (§4)
+    checkpoint_every: 2000    # snapshot + screening interval (§4, §5)
+
+verifier_config_overrides:
+  training:
+    max_steps: 8000
+    checkpoint_every: 500
+
+policy_seeds: [0, 1]          # DEV-tier search; >= 5 seeds for claims (§14)
+verifier_seed_pairing: same_as_policy
+
+panels:                        # §1; pairwise disjoint (env-seed roots)
+  screening:                 {env_seed: 2000, num_episodes: 50}
+  confirmation:              {env_seed: 3500, num_episodes: 200}
+  integration:               {env_seed: 4500, num_episodes: 10}
+  final_test:                {env_seed: 1000, num_episodes: 500}
+  dataset_size_development:  {env_seed: 5500, num_episodes: 200}
+
+episode_max_steps: 50         # PickCube-v1's registered horizon (task-native);
+                              # RL demos are 19-29 steps, so 50 is generous
+
+confirmation_rule:
+  top_k: 5
+  within_of_best: 0.10
+
+verifier_selection:
+  primary: pairwise_ranking_accuracy
+  secondary: balanced_accuracy
+
+paired_num_candidates: 16
+
+final_regimes:
+  - {name: nominal, max_steps: 100, perturbations: []}
+
+dataset_size_selection:       # §7
+  target_success_range: [0.40, 0.60]
+  candidate_sizes: [10, 25, 50, 100]
+  subset_seed: 0

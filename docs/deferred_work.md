@@ -40,6 +40,15 @@ run (`scripts/overnight_canonical.py`). Coverage is split across
   (was GELU + pre-norm + shared projection + queries-as-input + next_state-in-stats).
   Gated; `torch_builtin` (lightweight) stays the default. Takes effect on the ACT
   retrain. Remaining residuals below.
+- **ACT query-init fidelity (found by the retrain, fixed 2026-07-18).** The
+  query/CLS/memory-pos embeddings were BERT-style `std=0.02`; reference ACT/DETR
+  keeps them at the `nn.Embedding` default `N(0,1)`. In the zero-target DETR
+  decoder the query embedding is the ONLY position signal, so 0.02 leaves a
+  positional saddle (identical action at every chunk slot; one all-0% training
+  run — archived `outputs/active_min/rerun/act_saddle_broken/`; the earlier
+  49.6% run escaped the same saddle by luck at ~4k steps). Fixed gated
+  (`pos_std = 1.0` for `arch: detr`); regression test pins both scales and
+  position spread at init.
 - **ACT data recipe.** `episode_sampling: true` weights **episodes** (not
   transitions) equally per epoch with a random start (reference ACT); `standardize`
   clips std to `>= 0.01` (reference ACT) so near-constant dims are not
