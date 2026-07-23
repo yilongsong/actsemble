@@ -38,7 +38,11 @@ from actsemble.evaluation.evaluator import evaluate_system  # noqa: E402
 from actsemble.evaluation.metrics import wilson_interval  # noqa: E402
 from actsemble.evaluation.panels import make_panel  # noqa: E402
 from actsemble.protocol.confirmation import confirm_and_select  # noqa: E402
-from actsemble.protocol.screening import screen_all_snapshots, screening_history_path  # noqa: E402
+from actsemble.protocol.screening import (  # noqa: E402
+    make_screening_callback,
+    screen_all_snapshots,
+    screening_history_path,
+)
 from actsemble.sim.env_factory import make_env  # noqa: E402
 from actsemble.training.factory import policy_trainer  # noqa: E402
 from actsemble.utils.serialization import load_json, save_json  # noqa: E402
@@ -66,27 +70,39 @@ def run_family(
     max_steps: int,
     train_max_steps: int | None = None,
     config_override: str | None = None,
+    screen_videos: bool = True,
+    checkpoint_every: int | None = None,
+    train_epochs: int | None = None,
+    snapshots: int | None = None,
 ) -> dict:
     config_path = config_override or FAMILIES[family]
     cfg = load_config(str(REPO / config_path))
+    if train_epochs is not None:
+        # Budget in EPOCHS, so the number of gradient steps scales with dataset
+        # size automatically. A fixed STEP budget silently gives small datasets
+        # many more passes than large ones (n=25 ran 2100 epochs at the same
+        # 10500 steps that gave n=100 only ~525), which is exactly the confound
+        # that made the v1-vs-v3 comparison uninterpretable.
+        cfg.setdefault("training", {})["max_epochs"] = int(train_epochs)
+        cfg["training"]["max_steps"] = None
+    if snapshots is not None:
+        # Same number of snapshots per cell => same curve resolution AND same
+        # screening cost regardless of dataset size. steps_per_epoch mirrors
+        # train_diffusion_policy: floor(0.9 * windows / batch_size), drop_last.
+        _n = sum(len(e.state) for e in DatasetReader(dataset).episodes)
+        _bs = int(cfg.get("training", {}).get("batch_size", 256))
+        _vf = float(cfg.get("training", {}).get("val_fraction", 0.1))
+        _spe = max(1, int(_n * (1.0 - _vf)) // _bs)
+        _total = int(train_epochs) * _spe if train_epochs is not None else 10000
+        checkpoint_every = max(1, _total // int(snapshots))
+        print(f"[overnight] {_n} transitions, {_spe} steps/epoch, "
+              f"{_total} total steps, checkpoint_every={checkpoint_every} "
+              f"(~{snapshots} snapshots)", flush=True)
+    if checkpoint_every is not None:
+        cfg.setdefault("training", {})["checkpoint_every"] = int(checkpoint_every)
     trainer = policy_trainer(cfg)
     run_dir = out_root / family
     run_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"\n[overnight:{family}] ===== TRAIN =====", flush=True)
-    summary = trainer(
-        policy_cfg=cfg,
-        dataset_path=dataset,
-        output_dir=run_dir,
-        device=device,
-        max_steps=train_max_steps,
-    )
-    spe = int(summary["steps_per_epoch"])
-    print(
-        f"[overnight:{family}] trained {summary['steps']} steps "
-        f"({spe} steps/epoch); {len(list((run_dir / 'checkpoints').glob('step_*.pt')))} snapshots",
-        flush=True,
-    )
 
     meta = DatasetReader(dataset).metadata
     env = make_env(
@@ -94,16 +110,56 @@ def run_family(
         control_mode=meta.controller,
         sim_backend=meta.simulation_backend,
         obs_mode="state",
-        render_mode=None,
+        # rgb_array so screening can record a few rollouts; frames are only
+        # grabbed for the handful of episodes actually being saved.
+        render_mode="rgb_array" if screen_videos else None,
+        # MUST be passed: the task's registered horizon truncates the episode
+        # regardless of the max_steps handed to the evaluator, which is only a
+        # ceiling on the rollout loop. Without this, --max-steps 160 on
+        # PickCube-v1 still ends at its registered 50 and every episode scores
+        # 0. (No-op where the two already agree: PushT-v1 registers 100, which
+        # is this script's default.)
+        max_episode_steps=max_steps,
     )
     try:
-        print(f"[overnight:{family}] ===== SCREEN (50 ep) =====", flush=True)
+        print(f"\n[overnight:{family}] ===== TRAIN (screening every snapshot) =====", flush=True)
+        summary = trainer(
+            policy_cfg=cfg,
+            dataset_path=dataset,
+            output_dir=run_dir,
+            device=device,
+            max_steps=train_max_steps,
+            # Screen INSIDE training, at every snapshot: the closed-loop curve
+            # (and its videos) appear as the run proceeds, so a broken setup
+            # shows up at the first snapshot instead of after the whole budget.
+            # Runs in the trainer's RNG guard, so it cannot perturb training.
+            on_checkpoint=make_screening_callback(
+                run_dir,
+                make_panel("screening"),
+                env=env,
+                device=device,
+                max_steps=max_steps,
+                save_videos=screen_videos,
+            ),
+        )
+        spe = int(summary["steps_per_epoch"])
+        print(
+            f"[overnight:{family}] trained {summary['steps']} steps "
+            f"({spe} steps/epoch); {len(list((run_dir / 'checkpoints').glob('step_*.pt')))} snapshots",
+            flush=True,
+        )
+
+        # Catch-up pass: a no-op when the hook already screened every snapshot,
+        # and the resume path if the run was interrupted mid-training.
+        print(f"[overnight:{family}] ===== SCREEN (catch-up) =====", flush=True)
         screen_all_snapshots(
             run_dir,
             make_panel("screening"),
             env=env,
             device=device,
             max_steps=max_steps,
+            save_videos=screen_videos,
+            skip_screened=True,
         )
         print(f"[overnight:{family}] ===== CONFIRM + SELECT (200 ep) =====", flush=True)
         report = confirm_and_select(
@@ -194,6 +250,36 @@ def main() -> int:
         help="override the config training budget (for quick end-to-end tests)",
     )
     ap.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=None,
+        help="override snapshot interval IN STEPS (config default 1000). Small "
+             "datasets get few steps per epoch, so a fixed step interval is very "
+             "coarse in epochs for them (n=10 at ~2 steps/epoch => one snapshot "
+             "per ~500 epochs). Lower this for small-n cells to resolve the peak.",
+    )
+    ap.add_argument(
+        "--train-epochs",
+        type=int,
+        default=None,
+        help="training budget IN EPOCHS (steps then scale with dataset size). "
+             "Preferred over --train-max-steps for cross-dataset comparisons.",
+    )
+    ap.add_argument(
+        "--snapshots",
+        type=int,
+        default=None,
+        help="target NUMBER of snapshots across the run; checkpoint_every is "
+             "derived from it so every cell gets the same curve resolution "
+             "(and the same screening cost) regardless of dataset size.",
+    )
+    ap.add_argument(
+        "--no-screen-videos",
+        action="store_true",
+        help="skip recording screening rollouts (videos are on by default: a few "
+             "successes and failures per snapshot, so a flat curve can be SEEN)",
+    )
+    ap.add_argument(
         "--config",
         default=None,
         help="override the family's config path (ablation variants; single --family only)",
@@ -217,6 +303,10 @@ def main() -> int:
                 args.max_steps,
                 args.train_max_steps,
                 args.config,
+                not args.no_screen_videos,
+                args.checkpoint_every,
+                args.train_epochs,
+                args.snapshots,
             )
         except Exception as exc:  # keep going so one failure doesn't waste the night
             failures[fam] = repr(exc)

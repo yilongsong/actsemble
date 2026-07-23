@@ -192,11 +192,36 @@ labels (nothing to copy; its degraded output is a 0.36 moving command), and
 small delta commands do not freeze the plant (42% of healthy motion) — no
 fixed point.
 
-**Still open (one level down):** what makes those states "hard" — why
-scene-conditioning collapses there (signature: late-phase-like geometry,
-neighbor phase 0.70–0.74, stationary plant) — and whether the ≈q fallback
-is literal input-copying circuitry or the L1 median under direction
-ambiguity (whose center, for absolute targets, IS q). Matrix predictions,
+**6.3 Cross-family closure (executed): the trap needs a REGRESSION head.**
+Flow and DP trained on the identical abs-joints dataset, identical
+protocol, n=300 arms:
+
+| family (abs-joints) | latest | h8 | verdict |
+|---|---|---|---|
+| ACT (L1 regression) | 25.3% | **36.7%** | collapse at latest |
+| flow (CFM sampler) | **59.3%** | 49.3% | latest wins (+10.0*) |
+| DP (DDPM sampler) | **57.3%** | 50.3% | latest wins (+7.0*) |
+
+Mechanism probe on flow-abs: low-command states are still visited (28% of
+steps, policy 0.058 vs neighbor labels 0.289 at late-phase-like geometry
+0.70 — the "hard states produce small commands" tendency is SHARED across
+heads) but **median dwell is 1 step** with no scheme asymmetry: each
+re-query draws a fresh sample, so nothing absorbs. Final form of the
+account: the stall requires three legs — (i) a collapse-toward-stay
+tendency at hard states (shared; strongest for the deterministic median),
+(ii) DETERMINISM, so re-querying the frozen state reproduces the same
+output (ACT yes; samplers no), (iii) H_a=1 execution to close the loop.
+Removing any leg (sample instead of regress; execute the chunk; delta
+labels with no copyable stop) breaks the trap. Representation-quality
+claims are therefore head-conditional: flow-abs latest (59.3) actually
+EXCEEDS flow-delta latest (57.0) — "absolute joints is worse" was an ACT
+artifact.
+
+**Still open (one level down):** why scene-conditioning collapses at those
+states (signature: late-phase-like geometry, neighbor phase 0.70–0.74,
+stationary plant) — and whether ACT's ≈q fallback is literal input-copying
+circuitry or the L1 median under direction ambiguity (whose center, for
+absolute targets, IS q). Matrix predictions,
 now all H-B-based: **chunk-anchored residuals** (r = a_{t+k} − q_anchor)
 re-introduce a copyable zero → trap predicted wherever anchor-copy is
 cheap; **delta-JOINTS** (δ = a − q = the lead) keeps a

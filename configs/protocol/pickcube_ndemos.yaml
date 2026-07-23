@@ -8,7 +8,7 @@
 # (down to 5 or up past 100) and rerun — the driver reuses finished cells.
 experiment_version: pickcube_ndemos_v1
 
-dataset: data/pickcube/subset_SELECTED.h5   # filled after §7 selection
+dataset: outputs/pickcube/teleop_v1/teleop_100.h5   # DEFAULT pool, see configs/data/pickcube_teleop.yaml
 policy_config: configs/policies/state_diffusion.yaml
 verifier_config: configs/components/action_chunk_compatibility.yaml
 
@@ -32,8 +32,15 @@ panels:                        # §1; pairwise disjoint (env-seed roots)
   final_test:                {env_seed: 1000, num_episodes: 500}
   dataset_size_development:  {env_seed: 5500, num_episodes: 200}
 
-episode_max_steps: 50         # PickCube-v1's registered horizon (task-native);
-                              # RL demos are 19-29 steps, so 50 is generous
+episode_max_steps: 160        # The horizon must scale with the DEMONSTRATOR.
+                              # Old RL bundle: demos 19-29 steps, 50 was generous.
+                              # Default pool is now the teleop-like one
+                              # (configs/data/pickcube_teleop.yaml), whose demos
+                              # run 38-110 steps (median 65, p95 106) because
+                              # the approach is deliberately slow. At 50 steps a
+                              # policy imitating it cannot finish and would score
+                              # ~0. 160 = p95 x 1.5, set from the measured length
+                              # distribution rather than a round number.
 
 confirmation_rule:
   top_k: 5
@@ -50,5 +57,18 @@ final_regimes:
 
 dataset_size_selection:       # §7
   target_success_range: [0.40, 0.60]
-  candidate_sizes: [10, 25, 50, 100]
+  # Sweep for the teleop-like demonstrator (configs/data/pickcube_teleop.yaml).
+  # NOTE 150 > the current pool of 100 episodes: regenerate at --n 200 first,
+  #   python scripts/generate_pickcube_teleop.py --n 200 --descent-cap 0.30 \
+  #     --noise-sigma 0.15 --align-tol 0.014 --max-steps 110 \
+  #     --out outputs/pickcube/teleop_v1/teleop_200.h5
+  # then cut nested subsets with scripts/subset_dataset.py. The generator walks
+  # env seeds sequentially from one RNG, so a longer run should reproduce the
+  # first 100 episodes exactly -- VERIFY that (compare per-episode hashes)
+  # before treating teleop_100 results as cells of the same sweep.
+  # Measured so far on this demonstrator (screening panel, 50 ep, horizon 160):
+  #   n=100 -> plateau 76-82%, well ABOVE the target band
+  #   n=50  -> 40% at step 2000 vs n=100's 58% at the same step (in progress)
+  # so the operating point is expected at a SMALLER n than the RL bundle needed.
+  candidate_sizes: [10, 25, 50, 100, 150]
   subset_seed: 0

@@ -41,8 +41,37 @@ def make_env(
     if max_episode_steps is not None:
         kwargs["max_episode_steps"] = max_episode_steps
     env = gym.make(task_id, **kwargs)
+    if max_episode_steps is not None:
+        got = effective_horizon(env)
+        if got is not None and got != max_episode_steps:
+            raise EnvironmentMismatchError(
+                f"{task_id}: asked for max_episode_steps={max_episode_steps} but the "
+                f"env truncates at {got}. Episodes would be cut short and score 0."
+            )
     _warmup(env, warmup_episodes)
     return env
+
+
+def effective_horizon(env) -> int | None:
+    """The step count at which the env will actually set ``truncated``.
+
+    Do NOT read ``env.spec.max_episode_steps`` for this: ManiSkill registers the
+    horizon on its own TimeLimitWrapper, and ``spec.max_episode_steps`` reads
+    None even when the env truncates at 50 -- which looks like "no limit" and is
+    how a 160-step evaluation silently became a 50-step one, scoring every
+    episode 0. Walk the wrapper chain instead.
+
+    Returns None if no limiting wrapper is found (genuinely unlimited).
+    """
+    seen, depth = None, 0
+    node = env
+    while node is not None and depth < 16:
+        value = getattr(node, "_max_episode_steps", None)
+        if value is not None:
+            seen = int(value) if seen is None else min(seen, int(value))
+        node = getattr(node, "env", None)
+        depth += 1
+    return seen
 
 
 # Fixed private seeds for simulator warmup; never part of any panel.

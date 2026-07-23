@@ -1,0 +1,62 @@
+# PickCube-v1 pick-and-place pool: DEFAULT as of 2026-07-21.
+#
+# Replaces the official ManiSkill RL bundle (configs/data/pickcube.yaml, kept
+# for reproducing pre-2026-07-21 results). That bundle is a PPO teacher and is
+# bang-bang: its recorded actions saturate at dz=-1.0 for three steps, then
+# +1.0. Measured on its 100-episode subset:
+#
+#   * the approach occupies 6 of 50 frames (12%); the cube leaves the table at
+#     median frame 6.
+#   * 66% of every episode (median 33 frames) is the arm FROZEN at the goal.
+#   * only 801 approach poses across 100 episodes, and 0/100 episodes ever
+#     raise the hand above their own start height before grasping -- so the
+#     reachable approach ceiling is just the highest start pose, 0.209 m.
+#
+# That leaves almost no in-distribution robot states to reset to, which is what
+# the recovery track needs, and spends two-thirds of the training signal on
+# "output no motion".
+#
+# This pool is generated instead by scripts/generate_pickcube_teleop.py -- a
+# scripted demonstrator (NOT human teleoperation; "teleop-like" means resembling
+# it) with a capped approach speed, temporally correlated Ornstein-Uhlenbeck
+# wander, a lateral-alignment gate before the jaws close, and wrist rotation
+# onto the cube's nearest face.
+#
+# Measured, RL bundle -> this pool (both 100 episodes):
+#   approach frames/ep    6 (12%)  ->  46 (71%)
+#   frozen tail          33 (66%)  ->  0
+#   approach poses          801    ->  4989
+#   descent rate       2.73 cm/fr  ->  ~0.5 cm/fr
+#   grasp lateral off.    2.8 mm   ->  2.2 mm  (0% beyond 12 mm)
+#   wrist misalignment      6.1 deg -> 2.0 deg
+#
+# CAVEATS carried by this pool:
+#   * success-only filtering keeps 100 of 127 attempts (79%), so it selects
+#     toward easier scenes -- same contract as the RL bundle, but state it.
+#   * DIFFERENT DEMONSTRATOR: a policy trained here is a NEW baseline and is
+#     NOT comparable to the RL-bundle numbers (e.g. the 58% at n=100).
+#   * episode length 38-110 (median 65, p95 106) vs a uniform 50. The
+#     evaluation horizon must grow with the demonstrator -- 50 steps would make
+#     the task unfinishable. See episode_max_steps in the protocol config.
+#   * still tops out at 0.200 m hand height: slowing the descent adds
+#     resolution ALONG the same path, it cannot create poses above where the
+#     arm starts. Raising that needs the robot's initial pose randomized
+#     higher, i.e. regenerating with a different reset distribution.
+task_id: PickCube-v1
+control_mode: pd_ee_delta_pose
+sim_backend: physx_cuda
+dataset_path: outputs/pickcube/teleop_v1/teleop_100.h5
+dataset_hash: e67e12876ccd9c13d45469ad3972d192941a4eeda86f3fa7f15b20ed86318082
+generator: scripts/generate_pickcube_teleop.py
+generator_args:
+  n: 100
+  descent_cap: 0.30
+  noise_sigma: 0.15
+  noise_alpha: 0.85
+  align_tol: 0.014
+  noise_taper: 0.06
+  kyaw: 1.2
+  max_steps: 110
+  hold: 4
+  seed: 0
+seed: 0

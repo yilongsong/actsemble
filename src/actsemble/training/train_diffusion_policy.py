@@ -122,18 +122,30 @@ def resolve_total_steps(
 
 def build_lr_scheduler(optimizer, tcfg: dict, total_steps: int):
     """Optional LR schedule. ``constant`` (default) -> None; ``cosine`` -> linear
-    warmup for ``lr_warmup_steps`` then cosine decay to 0 (authoritative DP)."""
+    warmup for ``lr_warmup_steps`` then cosine decay to 0 (authoritative DP).
+
+    ``lr_schedule_steps`` PINS the cosine horizon independently of how many steps
+    the run actually takes. Without it the schedule is derived from the requested
+    budget, so two runs of different length are NOT prefixes of one another: at
+    step 7500 the LR multiplier is 0.206 under a 10500-step horizon and 0.527
+    under a 15000-step one (2.56x; at step 10000 the ratio is 43x). Any study
+    that varies the training horizon and compares checkpoints at matched steps
+    -- e.g. measuring where closed-loop success saturates -- must pin this, or
+    the measured saturation point is confounded with the learning-rate schedule.
+    See docs/training_duration_law.md.
+    """
     kind = str(tcfg.get("lr_scheduler", "constant"))
     if kind == "constant":
         return None
     if kind != "cosine":
         raise ValueError(f"Unknown lr_scheduler: {kind}")
     warmup = int(tcfg.get("lr_warmup_steps", 0))
+    horizon = int(tcfg.get("lr_schedule_steps") or total_steps)
 
     def lr_lambda(step: int) -> float:
         if step < warmup:
             return (step + 1) / max(1, warmup)
-        prog = (step - warmup) / max(1, total_steps - warmup)
+        prog = (step - warmup) / max(1, horizon - warmup)
         return max(0.0, 0.5 * (1.0 + math.cos(math.pi * min(1.0, prog))))
 
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
